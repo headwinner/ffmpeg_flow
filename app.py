@@ -4,6 +4,7 @@ from storage import sm
 import os
 from config import STORAGE_JSON_FILE, HLS_OUTPUT_DIR, HOST, PORT
 from utils.app_utils import error, success
+from threading import Thread
 
 app = Flask(__name__)
 
@@ -94,4 +95,7 @@ def serve_hls(filename):
 # 启动 Flask
 # ----------------------
 if __name__ == "__main__":
-    app.run(host=HOST, port=PORT, debug=True)
+    # 启动监控线程
+    monitor_thread = Thread(target=sc.monitor_watermarks, daemon=True)
+    monitor_thread.start()
+    app.run(host=HOST, port=PORT)
