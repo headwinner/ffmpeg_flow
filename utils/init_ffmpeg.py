@@ -37,17 +37,12 @@ def _progress_hook(count, block_size, total_size):
     """下载进度回调"""
     global _last_time, _last_bytes
     downloaded = count * block_size
-    if total_size > 0:
-        percent = downloaded / total_size * 100
-    else:
-        percent = 0
+    percent = (downloaded / total_size * 100) if total_size > 0 else 0
 
     now = time.time()
     elapsed = now - _last_time if _last_time else 0
-    speed = 0
     if elapsed > 0:
-        speed = downloaded - _last_bytes  # bytes in elapsed seconds
-        speed_per_sec = speed / elapsed
+        speed_per_sec = (downloaded - _last_bytes) / elapsed
     else:
         speed_per_sec = 0
 
@@ -61,19 +56,23 @@ def _progress_hook(count, block_size, total_size):
     print(f"\rDOWNLOAD |{bar}| {percent:6.2f}%  {format_speed(speed_per_sec)}", end='', flush=True)
 
 
+
 def init_ffmpeg():
     """初始化 ffmpeg，如果没有就自动下载并解压"""
     if os.path.exists(FFMPEG_EXE):
-        log("[INFO]", "ffmpeg 已存在:", FFMPEG_EXE)
+        log("INFO", f"ffmpeg 已存在: {FFMPEG_EXE}")
         return FFMPEG_EXE
 
-    log("[INFO]", "未找到 ffmpeg，开始下载...")
     zip_path = "ffmpeg.zip"
 
-    # 下载 zip 带进度 + 速度
-    urllib.request.urlretrieve(FFMPEG_URL, zip_path, _progress_hook)
-    print()  # 换行
-    log("[SUCCESS]", "下载完成:", zip_path)
+    # 如果 ZIP 已存在，则跳过下载
+    if not os.path.exists(zip_path):
+        log("INFO", "未找到 ffmpeg ZIP，开始下载...")
+        urllib.request.urlretrieve(FFMPEG_URL, zip_path, _progress_hook)
+        print()  # 换行
+        log("SUCCESS", f"下载完成: {zip_path}")
+    else:
+        log("INFO", f"ZIP 文件已存在，跳过下载: {zip_path}")
 
     # 解压缩
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
@@ -87,5 +86,5 @@ def init_ffmpeg():
     os.remove(zip_path)
     shutil.rmtree("ffmpeg_tmp")
 
-    log("[SUCCESS]", "ffmpeg 已解压到:", FFMPEG_EXE)
+    log("SUCCESS", f"ffmpeg 已解压到: {FFMPEG_EXE}")
     return FFMPEG_EXE
