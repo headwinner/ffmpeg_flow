@@ -4,7 +4,7 @@ from flask import Flask, request, send_from_directory
 from flask_cors import CORS
 from stream_controller import sc
 from storage import sm
-from config import HLS_OUTPUT_DIR, HOST, PORT
+from config import HLS_OUTPUT_DIR, WATER_MARK_PATH, PORT
 from utils.app_utils import error, success
 from threading import Thread
 
@@ -27,7 +27,7 @@ def bind_stream():
     if not stream_uid:
         return error("缺少参数", 400)
     if file:
-        save_path = f"watermarks/{stream_uid}.png"
+        save_path = f"{WATER_MARK_PATH}/{stream_uid}.png"
         file.save(save_path)
     # 更新绑定信息
     uid = sm.set_binding(
