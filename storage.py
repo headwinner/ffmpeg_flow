@@ -1,11 +1,11 @@
 import os
 import json
-from threading import Lock
 import uuid
-from config import STORAGE_JSON_FILE, HLS_OUTPUT_DIR, DATA_FILE
+from config import STORAGE_JSON_FILE, HLS_OUTPUT_DIR, DATA_FILE, WATER_MARK_PATH
 
 os.makedirs(DATA_FILE, exist_ok=True)
 os.makedirs(HLS_OUTPUT_DIR, exist_ok=True)
+os.makedirs(WATER_MARK_PATH, exist_ok=True)
 
 class StorageManager:
     """
