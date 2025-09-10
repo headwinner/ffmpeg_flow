@@ -103,7 +103,7 @@ class StorageManager:
 
     def get_hls_url(self, uid):
         info = self.get_info(uid)
-        return info["hls_url"] if info else None
+        return info["hls_no_wm"] if info else None
 
     def list_bindings(self):
         return self._load()
