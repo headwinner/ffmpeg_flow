@@ -7,6 +7,7 @@ os.makedirs(DATA_FILE, exist_ok=True)
 os.makedirs(HLS_OUTPUT_DIR, exist_ok=True)
 os.makedirs(WATER_MARK_PATH, exist_ok=True)
 
+
 class StorageManager:
     """
     管理视频流 UID、URL、多水印及 HLS 输出路径
@@ -20,6 +21,20 @@ class StorageManager:
 
         if not os.path.exists(hls_output_dir):
             os.makedirs(hls_output_dir)
+        self.stop_all_streams()
+
+    # ----------------------
+    # 将所有流状态设为 stopped
+    # ----------------------
+    def stop_all_streams(self):
+        data = self._load()
+        updated = False
+        for uid, info in data.items():
+            if info.get("status") != "stopped":
+                info["status"] = "stopped"
+                updated = True
+        if updated:
+            self._save(data)
 
     # ----------------------
     # 确保 JSON 文件存在
@@ -118,6 +133,7 @@ class StorageManager:
             self._save(data)
             return True
         return False
+
     # ----------------------
     # 清空水印
     # ----------------------
@@ -138,7 +154,6 @@ class StorageManager:
             self._save(data)
             return True
         return False
-
 
 
 sm = StorageManager()
