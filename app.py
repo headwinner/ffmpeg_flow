@@ -1,8 +1,7 @@
 from flask import Flask, request, send_from_directory
 from stream_controller import sc
 from storage import sm
-import os
-from config import STORAGE_JSON_FILE, HLS_OUTPUT_DIR, HOST, PORT
+from config import HLS_OUTPUT_DIR, HOST, PORT
 from utils.app_utils import error, success
 from threading import Thread
 
@@ -20,10 +19,12 @@ def bind_stream():
     stream_uid = request.form.get("stream_uid")
     file = request.files.get("file")
     url = request.form.get("url")
-    if not stream_uid or not file:
+    save_path = None
+    if not stream_uid:
         return error("缺少参数", 400)
-    save_path = f"watermarks/{stream_uid}.png"
-    file.save(save_path)
+    if file:
+        save_path = f"watermarks/{stream_uid}.png"
+        file.save(save_path)
     # 更新绑定信息
     uid = sm.set_binding(
         url=url,
