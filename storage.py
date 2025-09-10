@@ -72,17 +72,17 @@ class StorageManager:
         watermark_paths: png列表
         status: 流状态，默认 stopped
         """
+        data = self._load()
         if uid is None:
             uid = str(uuid.uuid4())  # 自动生成唯一ID
+            data[uid]["url"] = url
         if not isinstance(watermark_paths, list):
             watermark_paths = [watermark_paths]
-        data = self._load()
         # 基础路径
         playlist_base = f"{self.hls_output_dir}/{uid}"
         playlist_no_wm = f"{playlist_base}_no_wm.m3u8"
         playlist_wm = f"{playlist_base}_wm.m3u8"
         data[uid] = {
-            "url": url,
             "water_mark": watermark_paths,
             "hls_no_wm": playlist_no_wm,
             "hls_wm": playlist_wm,
