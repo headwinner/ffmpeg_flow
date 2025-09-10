@@ -65,32 +65,46 @@ class StorageManager:
     # ----------------------
     # 添加或更新绑定关系
     # ----------------------
-    def set_binding(self, url=None, watermark_paths=None, uid=None, status="stopped"):
+    def set_binding(self, url=None, watermark_paths=[], uid=None, status="stopped"):
         """
         uid: 可选，如果为空自动生成
         url: 流地址
         watermark_paths: png列表
         status: 流状态，默认 stopped
         """
-        data = self._load()
-        if uid is None:
-            uid = str(uuid.uuid4())  # 自动生成唯一ID
-            data[uid]["url"] = url
         if not isinstance(watermark_paths, list):
             watermark_paths = [watermark_paths]
+        data = self._load()
         # 基础路径
         playlist_base = f"{self.hls_output_dir}/{uid}"
         playlist_no_wm = f"{playlist_base}_no_wm.m3u8"
         playlist_wm = f"{playlist_base}_wm.m3u8"
         data[uid] = {
+            "url": url,
             "water_mark": watermark_paths,
             "hls_no_wm": playlist_no_wm,
             "hls_wm": playlist_wm,
             "status": status
         }
         self._save(data)
-
         return uid  # 返回最终 UID
+
+    # ----------------------
+    # 更新水印
+    # ----------------------
+    def update_watermark(self, uid, watermark_paths):
+        """
+        更新指定流的水印
+        :param uid: 流的唯一ID
+        :param watermark_paths: 新的水印路径列表
+        :return: True 更新成功，False UID不存在
+        """
+        if not isinstance(watermark_paths, list):
+            watermark_paths = [watermark_paths]
+        data = self._load()
+        data[uid]["water_mark"] = watermark_paths
+        self._save(data)
+        return True
 
     # ----------------------
     # 删除绑定
