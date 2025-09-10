@@ -120,6 +120,7 @@ class StreamController:
     def stop_stream(self, uid):
         if uid not in self.processes:
             log("WARNING", f"{uid} 不在转流列表中")
+            sm.update_status(uid, "stopped")
             return
         process = self.processes.pop(uid)
         os.kill(process.pid, signal.SIGTERM)
