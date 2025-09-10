@@ -96,8 +96,10 @@ class StreamController:
                 "-map", "0:v", "-map", "0:a?",
                 *self._hls_output_args(playlist_no_wm, gpu),
             ]
-
-        log_multiline("INFO", f"启动转流 {uid}", f"带水印 {BASE_URL}/{playlist_wm}", f"无水印 {BASE_URL}/{playlist_no_wm}")
+        log_text_list = [f"启动转流 {uid}", f"无水印 {BASE_URL}/{playlist_no_wm}"]
+        if watermark_paths:
+            log_text_list += [f"带水印 {BASE_URL}/{playlist_wm}"]
+        log_multiline("INFO", *log_text_list)
         sm.update_status(uid, "running")
         process = subprocess.Popen(cmd)
         self.processes[uid] = process
