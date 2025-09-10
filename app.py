@@ -47,6 +47,7 @@ def bind_stream():
 def unbind_stream(uid):
     sm.remove_binding(uid)
     sc.stop_stream(uid)
+    sm.clear_watermarks(uid)
     return success(f"{uid} 解绑成功")
 
 
