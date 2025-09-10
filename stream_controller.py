@@ -4,10 +4,9 @@ import signal
 import time
 import hashlib
 from threading import Thread
-
 from config import BASE_URL
 from storage import StorageManager
-from utils.utils import log
+from utils.utils import log, log_multiline
 
 
 class StreamController:
@@ -56,7 +55,7 @@ class StreamController:
     # ----------------------
     # 启动转流
     # ----------------------
-    def start_stream(self, uid):
+    def start_stream(self, uid, gpu=False):
         if uid in self.processes:
             log("WARNING", f"{uid} 已经在转流中")
             return
@@ -68,9 +67,13 @@ class StreamController:
 
         url = info["url"]
         watermark_paths = [wm for wm in info.get("water_mark", []) if wm]
-        playlist = info["hls_url"]
 
-        cmd = ["ffmpeg", "-i", url]
+        # 默认 hls_url 基础路径
+        playlist_no_wm = info.get("hls_no_wm")
+        playlist_wm = info.get("hls_wm")
+
+        # 构建命令
+        cmd = ["ffmpeg", "-loglevel", "error", "-i", url]
         for wm in watermark_paths:
             cmd += ["-i", wm]
 
@@ -78,31 +81,37 @@ class StreamController:
             filter_complex, last = self._build_filter(watermark_paths)
             cmd += [
                 "-filter_complex", filter_complex,
-                "-map", last,
-                "-map", "0:a?",  # 可选音频
+
+                # 带水印输出
+                "-map", last, "-map", "0:a?",
+                *self._hls_output_args(playlist_wm, gpu),
+
+                # 不带水印输出
+                "-map", "0:v", "-map", "0:a?",
+                *self._hls_output_args(playlist_no_wm, gpu),
             ]
         else:
-            cmd += ["-map", "0:v", "-map", "0:a?"]
+            cmd += [
+                "-map", "0:v", "-map", "0:a?",
+                *self._hls_output_args(playlist_no_wm, gpu),
+            ]
 
-        # 公共参数
-        cmd += [
-            "-c:v", "h264_nvenc",  # 使用硬件加速
-            "-preset", "p3",  # NVENC 编码预设，放在编码器后
-            "-r", "15",  # 帧率
-            "-c:a", "aac",
-            "-f", "hls",
-            "-hls_time", "5",
-            "-hls_list_size", "5",
-            "-hls_flags", "delete_segments",
-            playlist
-        ]
+        log_multiline("INFO", f"启动转流 {uid}", f"带水印 {BASE_URL}/{playlist_wm}", f"无水印 {BASE_URL}/{playlist_no_wm}")
 
-        log("INFO", f"启动转流 {uid} (url={BASE_URL}/{playlist})")
-        # process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        # process = subprocess.Popen(cmd)
-        with open(os.devnull, 'wb') as devnull:
-            process = subprocess.Popen(cmd, stdout=devnull, stderr=devnull)
+        process = subprocess.Popen(cmd)
         self.processes[uid] = process
+
+    def _hls_output_args(self, playlist, gpu=False):
+        """生成 HLS 输出的公共参数"""
+        if gpu:
+            vcodec = ["-c:v", "h264_nvenc", "-preset", "p3"]  # GPU
+        else:
+            vcodec = ["-c:v", "libx264", "-preset", "veryfast"]  # CPU
+        return [
+            *vcodec, "-r", "15", "-c:a", "aac",
+            "-f", "hls", "-hls_time", "5", "-hls_list_size", "5",
+            "-hls_flags", "delete_segments", playlist
+        ]
 
     # ----------------------
     # 停止转流
@@ -162,23 +171,3 @@ class StreamController:
 
 
 sc = StreamController()
-
-# ----------------------
-# 测试用例
-# ----------------------
-if __name__ == "__main__":
-    controller = sc
-
-    # 启动流
-    controller.start_stream("c97ad48a-94c4-4093-aaa4-4b4c85e6c63d")
-
-    # 启动监控线程
-    monitor_thread = Thread(target=controller.monitor_watermarks, daemon=True)
-    monitor_thread.start()
-
-    # 阻塞主线程，保持程序运行
-    try:
-        while True:
-            time.sleep(1)
-    except KeyboardInterrupt:
-        controller.stop_all()

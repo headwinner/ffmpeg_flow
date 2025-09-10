@@ -50,25 +50,28 @@ class StorageManager:
     # ----------------------
     # 添加或更新绑定关系
     # ----------------------
-    def set_binding(self, url=None, watermark_paths=None, uid=None):
+    def set_binding(self, url=None, watermark_paths=None, uid=None, status="stopped"):
         """
         uid: 可选，如果为空自动生成
         url: 流地址
         watermark_paths: png列表
+        status: 流状态，默认 stopped
         """
         if uid is None:
             uid = str(uuid.uuid4())  # 自动生成唯一ID
-
         if not isinstance(watermark_paths, list):
             watermark_paths = [watermark_paths]
-
         data = self._load()
-        hls_url = f"{self.hls_output_dir}/{uid}.m3u8"
-
+        # 基础路径
+        playlist_base = f"{self.hls_output_dir}/{uid}"
+        playlist_no_wm = f"{playlist_base}_no_wm.m3u8"
+        playlist_wm = f"{playlist_base}_wm.m3u8"
         data[uid] = {
             "url": url,
             "water_mark": watermark_paths,
-            "hls_url": hls_url
+            "hls_no_wm": playlist_no_wm,
+            "hls_wm": playlist_wm,
+            "status": status
         }
         self._save(data)
 
@@ -105,16 +108,15 @@ class StorageManager:
     def list_bindings(self):
         return self._load()
 
+    # ----------------------
+    # 更新状态
+    # ----------------------
+    def update_status(self, uid, status):
+        data = self._load()
+        if uid in data:
+            data[uid]["status"] = status
+            self._save(data)
+            return True
+        return False
+
 sm = StorageManager()
-
-# ----------------------
-# 测试用例
-# ----------------------
-if __name__ == "__main__":
-    sm = StorageManager()
-
-    # 添加绑定
-    sm.set_binding("rtmp://rtmp502-online-hzali.lechange.com:12966/live/openhz0bfb00174621406d8ace99765db3a296?source=open")
-    # 查询
-    print("stream_001 信息:", sm.get_info("stream_001"))
-
