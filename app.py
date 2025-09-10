@@ -143,4 +143,4 @@ signal.signal(signal.SIGTERM, handle_signal)  # kill 命令
 # 启动 Flask
 # ----------------------
 if __name__ == "__main__":
-    app.run(host=HOST, port=PORT)
+    app.run(host="0.0.0.0", port=PORT)
