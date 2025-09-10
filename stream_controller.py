@@ -147,7 +147,7 @@ class StreamController:
     # ----------------------
     # 监控水印变化
     # ----------------------
-    def monitor_watermarks(self, interval=60):
+    def monitor_watermarks(self, interval=10):
         """循环检测水印变化，发现变化就重启流"""
         while True:
             for uid in list(self.processes.keys()):

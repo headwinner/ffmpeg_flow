@@ -76,14 +76,16 @@ def stop_stream(uid):
 @app.route('/api/water_mark', methods=['DELETE'])
 def delete_water_mark():
     try:
-        data = request.json or request.form  # 兼容 JSON 和 form-data
+        data = request.json
         stream_uid = data.get("stream_uid")
 
         if not stream_uid:
             return error("缺少参数 stream_uid")
 
         # 调用 storage 清空水印
+        sc.stop_stream(stream_uid)
         if sm.clear_watermarks(stream_uid):
+            sc.start_stream(stream_uid)
             return success("水印已清空", {"stream_uid": stream_uid})
         else:
             return error("未找到对应的流")
