@@ -118,5 +118,27 @@ class StorageManager:
             self._save(data)
             return True
         return False
+    # ----------------------
+    # 清空水印
+    # ----------------------
+    def clear_watermarks(self, uid):
+        data = self._load()
+        if uid in data:
+            wm_paths = data[uid].get("water_mark", [])
+            # 遍历删除文件
+            for wm_path in wm_paths:
+                try:
+                    if wm_path and os.path.exists(wm_path):
+                        os.remove(wm_path)
+                except Exception as e:
+                    print(f"[WARN] 删除水印文件失败: {wm_path}, 错误: {e}")
+
+            # 清空列表
+            data[uid]["water_mark"] = []
+            self._save(data)
+            return True
+        return False
+
+
 
 sm = StorageManager()
