@@ -6,7 +6,9 @@ import hashlib
 from config import BASE_URL
 from storage import sm
 from utils.utils import log, log_multiline
+from utils.init_ffmpeg import init_ffmpeg
 
+FFMPEG_PATH = init_ffmpeg()
 
 class StreamController:
     """
@@ -72,7 +74,7 @@ class StreamController:
         playlist_wm = info.get("hls_wm")
 
         # 构建命令
-        cmd = ["ffmpeg", "-loglevel", "error", "-i", url]
+        cmd = [FFMPEG_PATH, "-loglevel", "error", "-i", url]
         for wm in watermark_paths:
             cmd += ["-i", wm]
 
