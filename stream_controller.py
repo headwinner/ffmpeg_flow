@@ -3,9 +3,8 @@ import os
 import signal
 import time
 import hashlib
-from threading import Thread
 from config import BASE_URL
-from storage import StorageManager
+from storage import sm
 from utils.utils import log, log_multiline
 
 
@@ -17,7 +16,7 @@ class StreamController:
 
     def __init__(self, storage_file="./data/stream_map.json", hls_output_dir="./hls"):
         self.processes = {}  # key: uid, value: subprocess.Popen
-        self.sm = StorageManager(storage_file=storage_file, hls_output_dir=hls_output_dir)
+        self.sm = sm
         self.wm_hash_cache = {}
         # 初始化缓存
         for uid, info in self.sm.list_bindings().items():
@@ -97,7 +96,7 @@ class StreamController:
             ]
 
         log_multiline("INFO", f"启动转流 {uid}", f"带水印 {BASE_URL}/{playlist_wm}", f"无水印 {BASE_URL}/{playlist_no_wm}")
-
+        sm.update_status(uid, "running")
         process = subprocess.Popen(cmd)
         self.processes[uid] = process
 
@@ -122,6 +121,7 @@ class StreamController:
             return
         process = self.processes.pop(uid)
         os.kill(process.pid, signal.SIGTERM)
+        sm.update_status(uid, "stopped")
         log("INFO", f"已停止转流 {uid}")
 
     # ----------------------
