@@ -1,3 +1,5 @@
+import atexit
+import signal
 from flask import Flask, request, send_from_directory
 from stream_controller import sc
 from storage import sm
@@ -92,11 +94,31 @@ def serve_hls(filename):
     return send_from_directory(HLS_OUTPUT_DIR, filename)
 
 
+# ---------------------- 启动监控线程 ----------------------
+monitor_thread = Thread(target=sc.monitor_watermarks, daemon=True)
+monitor_thread.start()
+
+
+# ---------------------- 注册退出钩子 ----------------------
+def cleanup():
+    sc.stop_all()  # 调用 stop_all 停止所有流和 ffmpeg
+
+
+# 当 Python 解释器正常退出时调用
+atexit.register(cleanup)
+
+
+# 捕获 SIGINT 和 SIGTERM 让 stop_all 也在 ctrl+c 或 kill 时生效
+def handle_signal(sig, frame):
+    cleanup()
+    exit(0)
+
+
+signal.signal(signal.SIGINT, handle_signal)  # Ctrl+C
+signal.signal(signal.SIGTERM, handle_signal)  # kill 命令
+
 # ----------------------
 # 启动 Flask
 # ----------------------
 if __name__ == "__main__":
-    # 启动监控线程
-    monitor_thread = Thread(target=sc.monitor_watermarks, daemon=True)
-    monitor_thread.start()
     app.run(host=HOST, port=PORT)
