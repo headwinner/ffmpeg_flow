@@ -1,6 +1,7 @@
 import atexit
 import signal
 from flask import Flask, request, send_from_directory
+from flask_cors import CORS
 from stream_controller import sc
 from storage import sm
 from config import HLS_OUTPUT_DIR, HOST, PORT
@@ -8,6 +9,7 @@ from utils.app_utils import error, success
 from threading import Thread
 
 app = Flask(__name__)
+CORS(app)
 
 
 # ----------------------
