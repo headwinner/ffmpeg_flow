@@ -17,27 +17,14 @@ CORS(app)
 # ----------------------
 @app.route("/api/bind", methods=["POST"])
 def bind_stream():
-    """
-    接收水印PNG并保存本地
-    """
     stream_uid = request.form.get("stream_uid")
-    file = request.files.get("file")
     url = request.form.get("url")
-    save_path = None
-    if not stream_uid:
-        return error("缺少参数", 400)
-    if file:
-        save_path = f"{WATER_MARK_PATH}/{stream_uid}.png"
-        file.save(save_path)
-    # 更新绑定信息
     uid = sm.set_binding(
         url=url,
-        watermark_paths=[save_path],
         uid=stream_uid
     )
     return success("绑定成功", {
         "uid": uid,
-        "watermark": save_path,
         "hls_url": sm.get_hls_url(uid)
     })
 
@@ -69,6 +56,32 @@ def start_stream(uid):
 def stop_stream(uid):
     sc.stop_stream(uid)
     return success(f"{uid} 转流已停止")
+
+
+# ----------------------
+# 更新水印
+# ----------------------
+@app.route("/api/water_mark", methods=["PATCH"])
+def update_water_mark():
+    """
+    更新指定流的水印
+    """
+    stream_uid = request.form.get("stream_uid")
+    file = request.files.get("file")
+    save_path = None
+    if file:
+        save_path = f"{WATER_MARK_PATH}/{stream_uid}.png"
+        file.save(save_path)
+    # 更新绑定信息
+    sm.update_watermark(
+        uid=stream_uid,
+        watermark_paths=[save_path]
+    )
+    return success("更新成功", {
+        "uid": stream_uid,
+        "watermark": save_path,
+    })
+
 
 # ----------------------
 # 清空水印
