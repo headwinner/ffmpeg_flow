@@ -141,8 +141,12 @@ class StreamController:
     # ----------------------
     def stop_all(self):
         for uid, process in list(self.processes.items()):
-            os.kill(process.pid, signal.SIGTERM)
-            log("INFO", f"已停止转流 {uid}")
+            try:
+                if process.poll() is None:  # 进程还在运行
+                    process.terminate()  # 安全结束进程
+                    log("INFO", f"已停止转流 {uid}")
+            except Exception as e:
+                log("ERROR", f"停止转流 {uid} 失败: {e}")
         self.processes.clear()
 
     # ----------------------
