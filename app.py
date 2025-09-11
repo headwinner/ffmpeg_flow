@@ -1,5 +1,7 @@
 import atexit
 import signal
+import time
+
 from flask import Flask, request, send_from_directory
 from flask_cors import CORS
 from stream_controller import sc
@@ -97,6 +99,7 @@ def delete_water_mark():
 
         # 调用 storage 清空水印
         sc.stop_stream(stream_uid)
+        time.sleep(1)
         if sm.clear_watermarks(stream_uid):
             sc.start_stream(stream_uid)
             return success("水印已清空", {"stream_uid": stream_uid})
