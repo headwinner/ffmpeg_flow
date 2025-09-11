@@ -16,7 +16,7 @@ class StreamController:
     支持开启/关闭某条流，检测水印变化自动重启
     """
 
-    def __init__(self, storage_file="./data/stream_map.json", hls_output_dir="./hls"):
+    def __init__(self):
         self.processes = {}  # key: uid, value: subprocess.Popen
         self.sm = sm
         self.wm_hash_cache = {}
@@ -69,16 +69,16 @@ class StreamController:
         url = info["url"]
         watermark_paths = [wm for wm in info.get("water_mark", []) if wm]
 
-        # 默认 hls_url 基础路径
         playlist_no_wm = info.get("hls_no_wm")
         playlist_wm = info.get("hls_wm")
 
-        # 构建命令
+        # 基础输入
         cmd = [FFMPEG_PATH, "-loglevel", "error", "-i", url]
         for wm in watermark_paths:
             cmd += ["-i", wm]
 
         if watermark_paths:
+            # 正常情况：叠加水印
             filter_complex, last = self._build_filter(watermark_paths)
             cmd += [
                 "-filter_complex", filter_complex,
@@ -92,14 +92,21 @@ class StreamController:
                 *self._hls_output_args(playlist_no_wm, gpu),
             ]
         else:
+            # 没有水印，也输出两路：wm 和 no_wm 都用原始视频
             cmd += [
+                # 无水印输出
                 "-map", "0:v", "-map", "0:a?",
                 *self._hls_output_args(playlist_no_wm, gpu),
+
+                # “水印流”也直接用原始流
+                "-map", "0:v", "-map", "0:a?",
+                *self._hls_output_args(playlist_wm, gpu),
             ]
+
         log_text_list = [f"启动转流 {uid}", f"无水印 {BASE_URL}/{playlist_no_wm}"]
-        if watermark_paths:
-            log_text_list += [f"带水印 {BASE_URL}/{playlist_wm}"]
+        log_text_list += [f"带水印 {BASE_URL}/{playlist_wm}"]  # 不管有没有水印都显示
         log_multiline("INFO", *log_text_list)
+
         sm.update_status(uid, "running")
         process = subprocess.Popen(cmd)
         self.processes[uid] = process
