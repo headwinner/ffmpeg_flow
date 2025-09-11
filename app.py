@@ -14,6 +14,12 @@ app = Flask(__name__)
 CORS(app)
 
 
+# -------- 健康接口 --------
+@app.route('/api/welcome', methods=['GET'])
+def welcome():
+    return success("服务器在线，欢迎使用视频流管理系统")
+
+
 # ----------------------
 # 添加或更新流绑定
 # ----------------------
@@ -59,6 +65,25 @@ def stop_stream(uid):
     sc.stop_stream(uid)
     return success(f"{uid} 转流已停止")
 
+# ----------------------
+# 更新url
+# ----------------------
+@app.route("/api/url", methods=["PATCH"])
+def update_url():
+    """
+    更新指定流的url
+    """
+    stream_uid = request.json.get("stream_uid")
+    url = request.json.get("url")
+    # 更新绑定信息
+    sm.update_url(
+        uid=stream_uid,
+        url=url
+    )
+    return success("更新成功", {
+        "uid": stream_uid,
+        "url": url,
+    })
 
 # ----------------------
 # 更新水印
