@@ -109,7 +109,7 @@ class StreamController:
         if gpu:
             vcodec = ["-c:v", "h264_nvenc", "-preset", "p3"]  # GPU
         else:
-            vcodec = ["-c:v", "libx264", "-preset", "veryfast"]  # CPU
+            vcodec = ["-c:v", "libx264", "-preset", "medium"]  # CPU
         return [
             *vcodec, "-r", "15", "-c:a", "aac",
             "-f", "hls", "-hls_time", "5", "-hls_list_size", "5",
