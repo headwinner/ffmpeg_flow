@@ -107,6 +107,15 @@ class StorageManager:
         return True
 
     # ----------------------
+    # 更新url
+    # ----------------------
+    def update_url(self, uid, url):
+        data = self._load()
+        data[uid]["url"] = url
+        self._save(data)
+        return True
+
+    # ----------------------
     # 删除绑定
     # ----------------------
     def remove_binding(self, uid):
