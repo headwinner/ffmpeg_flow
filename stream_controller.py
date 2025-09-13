@@ -10,6 +10,7 @@ from utils.init_ffmpeg import init_ffmpeg
 
 FFMPEG_PATH = init_ffmpeg()
 
+
 class StreamController:
     """
     管理多路视频流转 HLS + 多水印
@@ -41,11 +42,12 @@ class StreamController:
     def _build_filter(self, watermark_paths):
         """
         多水印完全覆盖视频
+        watermark_paths: dict {wm_uid: path}
         使用 scale 拉伸水印到视频大小，再 overlay
         """
         filters = ""
         last = "[0:v]"
-        for i, wm in enumerate(watermark_paths):
+        for i, path in enumerate(watermark_paths.values()):
             filters += f"[{i + 1}:v]scale=iw:ih[wm{i}];"
             filters += f"{last}[wm{i}]overlay=0:0:format=auto[v{i}];"
             last = f"[v{i}]"
@@ -67,47 +69,38 @@ class StreamController:
             return
 
         url = info["url"]
-        watermark_paths = [wm for wm in info.get("water_mark", []) if wm]
+        watermarks = info.get("water_mark", {})  # dict {wm_uid: path}
+        wm_paths = [path for path in watermarks.values() if path]  # 取路径列表
 
         playlist_no_wm = info.get("hls_no_wm")
         playlist_wm = info.get("hls_wm")
 
-        # 基础输入
         cmd = [FFMPEG_PATH, "-loglevel", "error", "-i", url]
-        for wm in watermark_paths:
+        for wm in wm_paths:
             cmd += ["-i", wm]
 
-        if watermark_paths:
-            # 正常情况：叠加水印
-            filter_complex, last = self._build_filter(watermark_paths)
+        if wm_paths:
+            filter_complex, last = self._build_filter(watermarks)
             cmd += [
                 "-filter_complex", filter_complex,
-
-                # 带水印输出
                 "-map", last, "-map", "0:a?",
                 *self._hls_output_args(playlist_wm, gpu),
-
-                # 不带水印输出
                 "-map", "0:v", "-map", "0:a?",
                 *self._hls_output_args(playlist_no_wm, gpu),
             ]
         else:
-            # 没有水印，也输出两路：wm 和 no_wm 都用原始视频
             cmd += [
-                # 无水印输出
                 "-map", "0:v", "-map", "0:a?",
                 *self._hls_output_args(playlist_no_wm, gpu),
-
-                # “水印流”也直接用原始流
                 "-map", "0:v", "-map", "0:a?",
                 *self._hls_output_args(playlist_wm, gpu),
             ]
 
         log_text_list = [f"启动转流 {uid}", f"无水印 {BASE_URL}/{playlist_no_wm}"]
-        log_text_list += [f"带水印 {BASE_URL}/{playlist_wm}"]  # 不管有没有水印都显示
+        log_text_list += [f"带水印 {BASE_URL}/{playlist_wm}"]
         log_multiline("INFO", *log_text_list)
 
-        sm.update_status(uid, "running")
+        self.sm.update_status(uid, "running")
         process = subprocess.Popen(cmd)
         self.processes[uid] = process
 
@@ -165,24 +158,26 @@ class StreamController:
                 info = self.sm.get_info(uid)
                 if not info:
                     continue
-                watermarks = [wm for wm in info.get("water_mark", []) if wm]
+
+                watermarks = info.get("water_mark", {})  # dict {wm_uid: path}
                 changed = False
-                # 检查新增/删除
+
                 cached = self.wm_hash_cache.get(uid, {})
-                if set(cached.keys()) != set(watermarks):
+                if set(cached.keys()) != set(watermarks.keys()):
                     changed = True
                 else:
-                    # 检查内容变化
-                    for wm in watermarks:
-                        md5 = self._file_md5(wm)
-                        if md5 != cached.get(wm):
+                    for wm_uid, path in watermarks.items():
+                        md5 = self._file_md5(path)
+                        if md5 != cached.get(wm_uid):
                             changed = True
                             break
+
                 if changed:
-                    log("INFO", f"水印变化，重启流 {uid}")
+                    log("INFO", f"检测到围栏水印变化，重启流 uid={uid}")
                     self.stop_stream(uid)
                     self.start_stream(uid)
-                    self.wm_hash_cache[uid] = {wm: self._file_md5(wm) for wm in watermarks}
+                    self.wm_hash_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
+
             time.sleep(interval)
 
 
