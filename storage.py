@@ -65,46 +65,75 @@ class StorageManager:
     # ----------------------
     # 添加或更新绑定关系
     # ----------------------
-    def set_binding(self, url=None, watermark_paths=[], uid=None, status="stopped"):
+    def set_binding(self, url=None, watermark_paths=None, uid=None, status="stopped"):
         """
         uid: 可选，如果为空自动生成
         url: 流地址
-        watermark_paths: png列表
+        watermark_paths: dict {wm_uid: path}
         status: 流状态，默认 stopped
         """
-        if not isinstance(watermark_paths, list):
-            watermark_paths = [watermark_paths]
+        if uid is None:
+            uid = str(uuid.uuid4())
+        if watermark_paths is None:
+            watermark_paths = {}
+
         data = self._load()
-        # 基础路径
         playlist_base = f"{self.hls_output_dir}/{uid}"
         playlist_no_wm = f"{playlist_base}_no_wm.m3u8"
         playlist_wm = f"{playlist_base}_wm.m3u8"
+
         data[uid] = {
             "url": url,
-            "water_mark": watermark_paths,
+            "water_mark": watermark_paths,  # 改为 {wm_uid: path}
             "hls_no_wm": playlist_no_wm,
             "hls_wm": playlist_wm,
             "status": status
         }
         self._save(data)
-        return uid  # 返回最终 UID
 
     # ----------------------
-    # 更新水印
+    # 更新流默认水印
     # ----------------------
     def update_watermark(self, uid, watermark_paths):
         """
-        更新指定流的水印
+        更新指定流的默认水印
         :param uid: 流的唯一ID
-        :param watermark_paths: 新的水印路径列表
+        :param watermark_paths: dict {wm_uid: path}
         :return: True 更新成功，False UID不存在
         """
-        if not isinstance(watermark_paths, list):
-            watermark_paths = [watermark_paths]
         data = self._load()
-        data[uid]["water_mark"] = watermark_paths
+        stream_data = data.get(uid)
+        if not stream_data:
+            return False
+
+        stream_data["water_mark"] = watermark_paths
         self._save(data)
         return True
+
+    # ----------------------
+    # 更新指定围栏/水印
+    # ----------------------
+    def update_watermark_by_wm_uid(self, uid, wm_uid, watermark_path):
+        """
+        更新指定流的某个围栏/水印
+        :param uid: 流的唯一ID
+        :param wm_uid: 围栏/水印唯一ID
+        :param watermark_path: 文件路径
+        :return: True 更新成功，False UID不存在
+        """
+        data = self._load()
+        stream_data = data.get(uid)
+        if not stream_data:
+            return False
+
+        if "water_mark" not in stream_data:
+            stream_data["water_mark"] = {}
+
+        stream_data["water_mark"][wm_uid] = watermark_path
+        self._save(data)
+        return True
+
+
 
     # ----------------------
     # 更新url
@@ -115,6 +144,7 @@ class StorageManager:
         self._save(data)
         return True
 
+
     # ----------------------
     # 删除绑定
     # ----------------------
@@ -124,6 +154,7 @@ class StorageManager:
             del data[uid]
             self._save(data)
 
+
     # ----------------------
     # 查询信息
     # ----------------------
@@ -131,20 +162,25 @@ class StorageManager:
         data = self._load()
         return data.get(uid, None)
 
+
     def get_url(self, uid):
         info = self.get_info(uid)
         return info["url"] if info else None
 
+
     def get_watermarks(self, uid):
         info = self.get_info(uid)
-        return info["water_mark"] if info else []
+        return info.get("water_mark", {}) if info else {}
+
 
     def get_hls_url(self, uid):
         info = self.get_info(uid)
         return info["hls_no_wm"] if info else None
 
+
     def list_bindings(self):
         return self._load()
+
 
     # ----------------------
     # 更新状态
@@ -157,26 +193,27 @@ class StorageManager:
             return True
         return False
 
+
     # ----------------------
     # 清空水印
     # ----------------------
     def clear_watermarks(self, uid):
         data = self._load()
-        if uid in data:
-            wm_paths = data[uid].get("water_mark", [])
-            # 遍历删除文件
-            for wm_path in wm_paths:
-                try:
-                    if wm_path and os.path.exists(wm_path):
-                        os.remove(wm_path)
-                except Exception as e:
-                    print(f"[WARN] 删除水印文件失败: {wm_path}, 错误: {e}")
+        stream_data = data.get(uid)
+        if not stream_data:
+            return False
 
-            # 清空列表
-            data[uid]["water_mark"] = []
-            self._save(data)
-            return True
-        return False
+        wm_dict = stream_data.get("water_mark", {})
+        for wm_path in wm_dict.values():
+            try:
+                if wm_path and os.path.exists(wm_path):
+                    os.remove(wm_path)
+            except Exception as e:
+                print(f"[WARN] 删除水印文件失败: {wm_path}, 错误: {e}")
+
+        stream_data["water_mark"] = {}
+        self._save(data)
+        return True
 
 
 sm = StorageManager()
