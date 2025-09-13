@@ -27,13 +27,13 @@ def welcome():
 def bind_stream():
     stream_uid = request.form.get("stream_uid")
     url = request.form.get("url")
-    uid = sm.set_binding(
+    sm.set_binding(
         url=url,
         uid=stream_uid
     )
     return success("绑定成功", {
-        "uid": uid,
-        "hls_url": sm.get_hls_url(uid)
+        "uid": stream_uid,
+        "hls_url": sm.get_hls_url(stream_uid)
     })
 
 
@@ -65,6 +65,7 @@ def stop_stream(uid):
     sc.stop_stream(uid)
     return success(f"{uid} 转流已停止")
 
+
 # ----------------------
 # 更新url
 # ----------------------
@@ -85,6 +86,7 @@ def update_url():
         "url": url,
     })
 
+
 # ----------------------
 # 更新水印
 # ----------------------
@@ -102,11 +104,42 @@ def update_water_mark():
     # 更新绑定信息
     sm.update_watermark(
         uid=stream_uid,
-        watermark_paths=[save_path]
+        watermark_paths={'0': save_path}
     )
     return success("更新成功", {
         "uid": stream_uid,
         "watermark": save_path,
+    })
+
+
+# ----------------------
+# 更新指定水印
+# ----------------------
+@app.route("/api/fence/water_mark", methods=["PATCH"])
+def update_fence_water_mark():
+    """
+    更新指定流和围栏的水印
+    """
+    stream_uid = request.form.get("stream_uid")
+    fence_uid = request.form.get("fence_uid")
+    file = request.files.get("file")
+
+    if not stream_uid or not fence_uid or not file:
+        return error("参数缺失", 400)
+
+    save_path = f"{WATER_MARK_PATH}/{stream_uid}_{fence_uid}.png"
+    file.save(save_path)
+
+    sm.update_watermark_by_wm_uid(
+        uid=stream_uid,
+        wm_uid=fence_uid,
+        watermark_path=save_path
+    )
+
+    return success("更新成功", {
+        "stream_uid": stream_uid,
+        "fence_uid": fence_uid,
+        "watermark": save_path
     })
 
 
