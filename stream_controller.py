@@ -23,9 +23,8 @@ class StreamController:
         self.wm_hash_cache = {}
         # 初始化缓存
         for uid, info in self.sm.list_bindings().items():
-            watermarks = [wm for wm in info.get("water_mark", []) if wm]
-            self.wm_hash_cache[uid] = {wm: self._file_md5(wm) for wm in watermarks}
-
+            watermarks = info.get("water_mark")
+            self.wm_hash_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
     # ----------------------
     # 计算文件 md5
     # ----------------------
@@ -99,7 +98,6 @@ class StreamController:
         log_text_list = [f"启动转流 {uid}", f"无水印 {BASE_URL}/{playlist_no_wm}"]
         log_text_list += [f"带水印 {BASE_URL}/{playlist_wm}"]
         log_multiline("INFO", *log_text_list)
-
         self.sm.update_status(uid, "running")
         process = subprocess.Popen(cmd)
         self.processes[uid] = process
@@ -182,3 +180,4 @@ class StreamController:
 
 
 sc = StreamController()
+
