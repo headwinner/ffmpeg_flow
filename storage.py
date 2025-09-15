@@ -1,7 +1,12 @@
 import os
 import json
 import uuid
+import shutil
 from config import STORAGE_JSON_FILE, HLS_OUTPUT_DIR, DATA_FILE, WATER_MARK_PATH
+
+# 如果目录存在就先删除
+if os.path.exists(HLS_OUTPUT_DIR):
+    shutil.rmtree(HLS_OUTPUT_DIR)
 
 os.makedirs(DATA_FILE, exist_ok=True)
 os.makedirs(HLS_OUTPUT_DIR, exist_ok=True)
