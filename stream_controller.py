@@ -181,7 +181,6 @@ class StreamController:
                 else:
                     for wm_uid, path in watermarks.items():
                         md5 = self._file_md5(path)
-                        print(md5, cached_md5s.get(wm_uid))
                         if md5 != cached_md5s.get(wm_uid):
                             changed = True
                             break
