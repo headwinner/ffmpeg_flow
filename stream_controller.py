@@ -112,9 +112,11 @@ class StreamController:
     def _hls_output_args(self, playlist, gpu=False):
         """生成 HLS 输出的公共参数"""
         if gpu:
-            vcodec = ["-c:v", "h264_nvenc", "-preset", "p3"]  # GPU
+            # GPU 使用 NVENC，高质量模式
+            vcodec = ["-c:v", "h264_nvenc", "-preset", "slow", "-rc", "vbr_hq", "-cq", "19", "-b:v", "5M"]
         else:
-            vcodec = ["-c:v", "libx264", "-preset", "medium"]  # CPU
+            # CPU 使用 libx264，高质量模式
+            vcodec = ["-c:v", "libx264", "-preset", "slow", "-crf", "18"]
         return [
             *vcodec, "-r", "15", "-c:a", "aac",
             "-f", "hls", "-hls_time", "5", "-hls_list_size", "5",
