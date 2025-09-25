@@ -25,18 +25,23 @@ class StreamController:
     def __init__(self):
         self.processes = {}  # key: uid, value: subprocess.Popen
         self.sm = sm
-        # 拆成两个缓存：路径快照（用于 dict 比较）和 md5 缓存（用于内容比较）
+        # 拆成三个缓存：路径快照、md5缓存、url缓存
         self.wm_paths_cache = {}  # { uid: {wm_uid: path, ...}, ... }
         self.wm_md5_cache = {}    # { uid: {wm_uid: md5, ...}, ... }
+        self.url_cache = {}       # { uid: url }
 
-        # 初始化缓存（注意：如果 list_bindings 返回的 water_mark 为空，存空 dict）
+        # 初始化缓存
         for uid, info in self.sm.list_bindings().items():
             watermarks = info.get("water_mark", {}) or {}
             self.wm_paths_cache[uid] = dict(watermarks)
             self.wm_md5_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
+            self.url_cache[uid] = info.get("url")
 
-        # 将原来的 print 改成 log_multiline
-        log_multiline("INFO", f"wm_paths_cache: {self.wm_paths_cache}", f"wm_md5_cache: {self.wm_md5_cache}", log_path=log_file_path)
+        log_multiline("INFO",
+                      f"wm_paths_cache: {self.wm_paths_cache}",
+                      f"wm_md5_cache: {self.wm_md5_cache}",
+                      f"url_cache: {self.url_cache}",
+                      log_path=log_file_path)
 
     # ----------------------
     # 计算文件 md5
@@ -156,6 +161,7 @@ class StreamController:
     # 监控水印变化
     # ----------------------
     def monitor_watermarks(self, interval=10):
+        """循环检测水印和 URL 变化，发现变化就重启流"""
         while True:
             for uid in list(self.processes.keys()):
                 info = self.sm.get_info(uid)
@@ -163,13 +169,18 @@ class StreamController:
                     continue
 
                 watermarks = info.get("water_mark", {}) or {}
+                url = info.get("url")
                 cached_paths = self.wm_paths_cache.get(uid)
                 cached_md5s = self.wm_md5_cache.get(uid, {})
+                cached_url = self.url_cache.get(uid)
 
                 changed = False
-                if watermarks != cached_paths:
+
+                # URL 或水印路径变化
+                if url != cached_url or watermarks != cached_paths:
                     changed = True
                 else:
+                    # md5 不同也认为变化
                     for wm_uid, path in watermarks.items():
                         md5 = self._file_md5(path)
                         if md5 != cached_md5s.get(wm_uid):
@@ -177,12 +188,16 @@ class StreamController:
                             break
 
                 if changed:
-                    log("INFO", f"检测到水印变化，重启流 uid={uid}", log_path=log_file_path)
+                    log("INFO", f"检测到 URL 或水印变化，重启流 uid={uid}", log_path=log_file_path)
                     self.stop_stream(uid)
                     time.sleep(1)
                     self.start_stream(uid)
+                    # 更新缓存
                     self.wm_paths_cache[uid] = dict(watermarks)
                     self.wm_md5_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
+                    self.url_cache[uid] = url
+
+            time.sleep(interval)
 
             time.sleep(interval)
 
