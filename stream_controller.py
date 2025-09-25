@@ -27,8 +27,8 @@ class StreamController:
         self.sm = sm
         # 拆成三个缓存：路径快照、md5缓存、url缓存
         self.wm_paths_cache = {}  # { uid: {wm_uid: path, ...}, ... }
-        self.wm_md5_cache = {}    # { uid: {wm_uid: md5, ...}, ... }
-        self.url_cache = {}       # { uid: url }
+        self.wm_md5_cache = {}  # { uid: {wm_uid: md5, ...}, ... }
+        self.url_cache = {}  # { uid: url }
 
         # 初始化缓存
         for uid, info in self.sm.list_bindings().items():
@@ -70,7 +70,7 @@ class StreamController:
     # ----------------------
     # 启动转流
     # ----------------------
-    def start_stream(self, uid, gpu=False):
+    def start_stream(self, uid, gpu=False, max_retries=3):
         if uid in self.processes:
             log("WARNING", f"{uid} 已经在转流中", log_path=log_file_path)
             return
@@ -111,8 +111,35 @@ class StreamController:
         log_text_list = [f"启动转流 {uid}", f"无水印 {BASE_URL}/{playlist_no_wm}", f"带水印 {BASE_URL}/{playlist_wm}"]
         log_multiline("INFO", *log_text_list, log_path=log_file_path)
         self.sm.update_status(uid, "running")
-        process = subprocess.Popen(cmd)
-        self.processes[uid] = process
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                process = subprocess.Popen(
+                    cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE
+                )
+                time.sleep(1)
+                if process.poll() is not None:
+                    # FFmpeg 立即退出，读取 stderr
+                    stderr = process.stderr.read().decode(errors="ignore")
+                    log_multiline(
+                        "FAIL",
+                        f"FFmpeg 启动失败 {uid} (尝试 {attempt}/{max_retries}):",
+                        stderr,
+                        log_path=log_file_path
+                    )
+                    raise RuntimeError("FFmpeg 进程立即退出")
+                self.processes[uid] = process
+                log("SUCCESS", f"转流 {uid} 启动成功 (尝试 {attempt})", log_path=log_file_path)
+                return
+            except Exception as e:
+                if attempt < max_retries:
+                    log("INFO", f"等待 2 秒后重试 {uid}", log_path=log_file_path)
+                    time.sleep(2)
+                else:
+                    log("FAIL", f"转流 {uid} 启动失败，停止转流", log_path=log_file_path)
+                    self.sm.update_status(uid, "stopped")
 
     def _hls_output_args(self, playlist, gpu=False):
         if gpu:
