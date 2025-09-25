@@ -11,10 +11,6 @@ from utils.init_ffmpeg import init_ffmpeg
 
 FFMPEG_PATH = init_ffmpeg()
 
-# 创建日志文件路径
-os.makedirs("./logs", exist_ok=True)
-log_file_path = f"./logs/log-{datetime.now().strftime('%Y%m%d-%H%M%S')}.log"
-
 
 class StreamController:
     """
@@ -37,11 +33,18 @@ class StreamController:
             self.wm_md5_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
             self.url_cache[uid] = info.get("url")
 
+        # ------------------------
+        # 日志文件路径
+        # ------------------------
+        os.makedirs("logs", exist_ok=True)
+        now_str = datetime.now().strftime("%Y%m%d-%H%M%S")
+        self.log_file_path = f"/logs/stream_controller-{now_str}.log"
+
         log_multiline("INFO",
                       f"wm_paths_cache: {self.wm_paths_cache}",
                       f"wm_md5_cache: {self.wm_md5_cache}",
                       f"url_cache: {self.url_cache}",
-                      log_path=log_file_path)
+                      log_path=self.log_file_path)
 
     # ----------------------
     # 计算文件 md5
@@ -72,12 +75,12 @@ class StreamController:
     # ----------------------
     def start_stream(self, uid, gpu=False, max_retries=3):
         if uid in self.processes:
-            log("WARNING", f"{uid} 已经在转流中", log_path=log_file_path)
+            log("WARNING", f"{uid} 已经在转流中", log_path=self.log_file_path)
             return
 
         info = self.sm.get_info(uid)
         if not info:
-            log("FAIL", f"UID {uid} 未找到绑定信息", log_path=log_file_path)
+            log("FAIL", f"UID {uid} 未找到绑定信息", log_path=self.log_file_path)
             return
 
         url = info["url"]
@@ -109,7 +112,7 @@ class StreamController:
             ]
 
         log_text_list = [f"启动转流 {uid}", f"无水印 {BASE_URL}/{playlist_no_wm}", f"带水印 {BASE_URL}/{playlist_wm}"]
-        log_multiline("INFO", *log_text_list, log_path=log_file_path)
+        log_multiline("INFO", *log_text_list, log_path=self.log_file_path)
         self.sm.update_status(uid, "running")
 
         for attempt in range(1, max_retries + 1):
@@ -127,18 +130,18 @@ class StreamController:
                         "FAIL",
                         f"FFmpeg 启动失败 {uid} (尝试 {attempt}/{max_retries}):",
                         stderr,
-                        log_path=log_file_path
+                        log_path=self.log_file_path
                     )
                     raise RuntimeError("FFmpeg 进程立即退出")
                 self.processes[uid] = process
-                log("SUCCESS", f"转流 {uid} 启动成功 (尝试 {attempt})", log_path=log_file_path)
+                log("SUCCESS", f"转流 {uid} 启动成功 (尝试 {attempt})", log_path=self.log_file_path)
                 return
             except Exception as e:
                 if attempt < max_retries:
-                    log("INFO", f"等待 2 秒后重试 {uid}", log_path=log_file_path)
+                    log("INFO", f"等待 2 秒后重试 {uid}", log_path=self.log_file_path)
                     time.sleep(2)
                 else:
-                    log("FAIL", f"转流 {uid} 启动失败，停止转流", log_path=log_file_path)
+                    log("FAIL", f"转流 {uid} 启动失败，停止转流", log_path=self.log_file_path)
                     self.sm.update_status(uid, "stopped")
 
     def _hls_output_args(self, playlist, gpu=False):
@@ -157,13 +160,13 @@ class StreamController:
     # ----------------------
     def stop_stream(self, uid):
         if uid not in self.processes:
-            log("WARNING", f"{uid} 不在转流列表中", log_path=log_file_path)
+            log("WARNING", f"{uid} 不在转流列表中", log_path=self.log_file_path)
             sm.update_status(uid, "stopped")
             return
         process = self.processes.pop(uid)
         os.kill(process.pid, signal.SIGTERM)
         sm.update_status(uid, "stopped")
-        log("INFO", f"已停止转流 {uid}", log_path=log_file_path)
+        log("INFO", f"已停止转流 {uid}", log_path=self.log_file_path)
 
     # ----------------------
     # 停止所有流
@@ -173,9 +176,9 @@ class StreamController:
             try:
                 if process.poll() is None:
                     process.terminate()
-                    log("INFO", f"已停止转流 {uid}", log_path=log_file_path)
+                    log("INFO", f"已停止转流 {uid}", log_path=self.log_file_path)
             except Exception as e:
-                log("FAIL", f"停止转流 {uid} 失败: {e}", log_path=log_file_path)
+                log("FAIL", f"停止转流 {uid} 失败: {e}", log_path=self.log_file_path)
         self.processes.clear()
 
     # ----------------------
@@ -215,7 +218,7 @@ class StreamController:
                             break
 
                 if changed:
-                    log("INFO", f"检测到 URL 或水印变化，重启流 uid={uid}", log_path=log_file_path)
+                    log("INFO", f"检测到 URL 或水印变化，重启流 uid={uid}", log_path=self.log_file_path)
                     self.stop_stream(uid)
                     time.sleep(1)
                     self.start_stream(uid)
