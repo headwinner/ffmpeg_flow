@@ -38,7 +38,7 @@ class StreamController:
         # ------------------------
         os.makedirs("logs", exist_ok=True)
         now_str = datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.log_file_path = f"/logs/stream_controller-{now_str}.log"
+        self.log_file_path = f"logs/stream_controller-{now_str}.log"
 
         log_multiline("INFO",
                       f"wm_paths_cache: {self.wm_paths_cache}",
