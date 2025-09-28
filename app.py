@@ -83,7 +83,7 @@ def update_url():
     )
     return success("更新成功", {
         "uid": stream_uid,
-        "url": url,
+        "hls_url": sm.get_hls_url(stream_uid)
     })
 
 
