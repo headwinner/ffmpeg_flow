@@ -37,15 +37,19 @@ class StreamController:
         # ------------------------
         # 日志文件路径
         # ------------------------
-        os.makedirs("logs", exist_ok=True)
-        now_str = datetime.now().strftime("%Y%m%d-%H%M%S")
-        self.log_file_path = f"logs/stream_controller-{now_str}.log"
+        now = datetime.now()
+        date_str = now.strftime("%Y-%m-%d_%H-%M-%S")  # YYYY-MM-DD_HH-MM-SS
+        log_dir = os.path.join("logs", date_str)
+        os.makedirs(log_dir, exist_ok=True)
+        self.log_file_path = os.path.join(log_dir, "stream_controller.log")
 
-        log_multiline("INFO",
-                      f"wm_paths_cache: {self.wm_paths_cache}",
-                      f"wm_md5_cache: {self.wm_md5_cache}",
-                      f"url_cache: {self.url_cache}",
-                      log_path=self.log_file_path)
+        log_multiline(
+            "INFO",
+            f"wm_paths_cache: {self.wm_paths_cache}",
+            f"wm_md5_cache: {self.wm_md5_cache}",
+            f"url_cache: {self.url_cache}",
+            log_path=self.log_file_path
+        )
 
     # ----------------------
     # 计算文件 md5
@@ -83,7 +87,9 @@ class StreamController:
     # 启动转流
     # ----------------------
     def start_stream(self, uid, gpu=False, max_retries=3):
+        """启动流，同时启动监控线程自动重启"""
         if uid in self.processes:
+            self.sm.update_status(uid, "running")
             log("WARNING", f"{uid} 已经在转流中", log_path=self.log_file_path)
             return
 
@@ -124,42 +130,48 @@ class StreamController:
         log_multiline("INFO", *log_text_list, log_path=self.log_file_path)
         self.sm.update_status(uid, "running")
 
-        for attempt in range(1, max_retries + 1):
+        # 开启独立线程监控 FFmpeg 进程，自动重启
+        threading.Thread(target=self._monitor_process, args=(uid, cmd, gpu, max_retries), daemon=True).start()
+
+    def _monitor_process(self, uid, cmd, gpu, max_retries):
+        attempt = 0
+        while attempt < max_retries:
             try:
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    bufsize=1
+                    bufsize=0  # 避免 RuntimeWarning
                 )
-                time.sleep(1)
-                if process.poll() is not None:
-                    # FFmpeg 立即退出，读取 stderr
-                    stderr = process.stderr.read().decode(errors="ignore")
-                    log_multiline(
-                        "FAIL",
-                        f"[FFMPEG] FFmpeg 启动失败 {uid} (尝试 {attempt}/{max_retries}):",
-                        stderr,
-                        log_path=self.log_file_path
-                    )
-                    raise RuntimeError("FFmpeg 进程立即退出")
+                self.processes[uid] = process
 
                 # 启动 stderr 捕获线程
-                threading.Thread(
-                    target=self._capture_stderr,
-                    args=(uid, process),
-                    daemon=True
-                ).start()
+                threading.Thread(target=self._capture_stderr, args=(uid, process), daemon=True).start()
 
-                self.processes[uid] = process
-                log("SUCCESS", f"转流 {uid} 启动成功 (尝试 {attempt})", log_path=self.log_file_path)
-            except Exception as e:
-                if attempt < max_retries:
-                    log("INFO", f"等待 2 秒后重试 {uid}", log_path=self.log_file_path)
-                    time.sleep(2)
+                log("SUCCESS", f"转流 {uid} 启动成功 (尝试 {attempt + 1})", log_path=self.log_file_path)
+
+                # 等待 FFmpeg 结束
+                process.wait()
+                if process.returncode != 0:
+                    log("FAIL", f"FFmpeg {uid} 异常退出，返回码 {process.returncode}", log_path=self.log_file_path)
                 else:
-                    log("FAIL", f"转流 {uid} 启动失败，停止转流", log_path=self.log_file_path)
-                    self.sm.update_status(uid, "stopped")
+                    log("INFO", f"FFmpeg {uid} 正常退出", log_path=self.log_file_path)
+                attempt += 1
+                if attempt < max_retries:
+                    log("INFO", f"等待 10 秒后重启 {uid} (尝试 {attempt + 1}/{max_retries})", log_path=self.log_file_path)
+                    time.sleep(10)
+            except Exception as e:
+                attempt += 1
+                log("FAIL", f"启动 {uid} 异常: {e}", log_path=self.log_file_path)
+                if attempt < max_retries:
+                    log("INFO", f"等待 10 秒后重试 {uid} (尝试 {attempt + 1}/{max_retries})", log_path=self.log_file_path)
+                    time.sleep(10)
+
+        # 超过最大尝试次数仍失败
+        if uid in self.processes:
+            self.processes.pop(uid, None)
+        self.sm.update_status(uid, "stopped")
+        log("FAIL", f"转流 {uid} 达到最大重试次数，停止转流", log_path=self.log_file_path)
 
     def _hls_output_args(self, playlist, gpu=False):
         if gpu:
