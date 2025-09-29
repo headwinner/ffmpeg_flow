@@ -1,6 +1,7 @@
 import subprocess
 import os
 import signal
+import threading
 import time
 import hashlib
 from datetime import datetime
@@ -70,6 +71,14 @@ class StreamController:
             filters = filters[:-1]
         return filters, last
 
+    def _capture_stderr(self, uid, process):
+        """实时捕获 FFmpeg stderr 并写入日志"""
+        for line in iter(process.stderr.readline, b''):
+            if not line:
+                break
+            log("FAIL", f"[FFMPEG] {uid}: {line.decode(errors='ignore').strip()}",
+                log_path=self.log_file_path)
+
     # ----------------------
     # 启动转流
     # ----------------------
@@ -120,7 +129,8 @@ class StreamController:
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE
+                    stderr=subprocess.PIPE,
+                    bufsize=1
                 )
                 time.sleep(1)
                 if process.poll() is not None:
@@ -128,14 +138,21 @@ class StreamController:
                     stderr = process.stderr.read().decode(errors="ignore")
                     log_multiline(
                         "FAIL",
-                        f"FFmpeg 启动失败 {uid} (尝试 {attempt}/{max_retries}):",
+                        f"[FFMPEG] FFmpeg 启动失败 {uid} (尝试 {attempt}/{max_retries}):",
                         stderr,
                         log_path=self.log_file_path
                     )
                     raise RuntimeError("FFmpeg 进程立即退出")
+
+                # 启动 stderr 捕获线程
+                threading.Thread(
+                    target=self._capture_stderr,
+                    args=(uid, process),
+                    daemon=True
+                ).start()
+
                 self.processes[uid] = process
                 log("SUCCESS", f"转流 {uid} 启动成功 (尝试 {attempt})", log_path=self.log_file_path)
-                return
             except Exception as e:
                 if attempt < max_retries:
                     log("INFO", f"等待 2 秒后重试 {uid}", log_path=self.log_file_path)
