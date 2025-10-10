@@ -175,13 +175,21 @@ class StreamController:
 
     def _hls_output_args(self, playlist, gpu=False):
         if gpu:
-            vcodec = ["-c:v", "h264_nvenc", "-preset", "p3"]
+            vcodec = ["-c:v", "h264_nvenc", "-preset", "p3", "-cq", "19"]
         else:
-            vcodec = ["-c:v", "libx264", "-preset", "medium"]
+            vcodec = ["-c:v", "libx264", "-preset", "slow", "-crf", "20"]
         return [
-            *vcodec, "-r", "15", "-c:a", "aac",
-            "-f", "hls", "-hls_time", "5", "-hls_list_size", "5",
-            "-hls_flags", "delete_segments", playlist
+            *vcodec,
+            "-r", "25",  # 帧率
+            "-b:v", "4000k",  # 码率
+            "-maxrate", "5000k",
+            "-bufsize", "10000k",
+            "-c:a", "aac",
+            "-f", "hls",
+            "-hls_time", "5",
+            "-hls_list_size", "5",
+            "-hls_flags", "delete_segments",
+            playlist
         ]
 
     # ----------------------
