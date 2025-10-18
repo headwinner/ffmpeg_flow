@@ -1,7 +1,6 @@
 import atexit
 import signal
 import time
-
 from flask import Flask, request, send_from_directory
 from flask_cors import CORS
 from stream_controller import sc
