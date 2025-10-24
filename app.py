@@ -5,7 +5,7 @@ from flask import Flask, request, send_from_directory
 from flask_cors import CORS
 from stream_controller import sc
 from storage import sm
-from config import HLS_OUTPUT_DIR, WATER_MARK_PATH, PORT
+from config import HLS_OUTPUT_DIR, WATER_MARK_PATH
 from utils.app_utils import error, success
 from threading import Thread
 
@@ -220,4 +220,4 @@ signal.signal(signal.SIGTERM, handle_signal)  # kill 命令
 # 启动 Flask
 # ----------------------
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=PORT)
+    app.run(host="0.0.0.0", port=5001)
