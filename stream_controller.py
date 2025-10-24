@@ -5,7 +5,7 @@ import threading
 import time
 import hashlib
 from datetime import datetime
-from config import BASE_URL
+from config import FLOW_URL
 from storage import sm
 from utils.utils import log, log_multiline
 from utils.init_ffmpeg import init_ffmpeg
@@ -126,7 +126,7 @@ class StreamController:
                 *self._hls_output_args(playlist_wm, gpu),
             ]
 
-        log_text_list = [f"启动转流 {uid}", f"无水印 {BASE_URL}/{playlist_no_wm}", f"带水印 {BASE_URL}/{playlist_wm}"]
+        log_text_list = [f"启动转流 {uid}", f"无水印 {FLOW_URL}/{playlist_no_wm}", f"带水印 {FLOW_URL}/{playlist_wm}"]
         log_multiline("INFO", *log_text_list, log_path=self.log_file_path)
         self.sm.update_status(uid, "running")
 
