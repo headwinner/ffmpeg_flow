@@ -126,7 +126,7 @@ class StreamController:
                 *self._hls_output_args(playlist_wm, gpu),
             ]
 
-        log_text_list = [f"启动转流 {uid}", f"无水印 {FLOW_URL}/{playlist_no_wm}", f"带水印 {FLOW_URL}/{playlist_wm}"]
+        log_text_list = [f"启动转流 {uid}", f"无水印 https://jrlyy.fusionfintrade.com:39100/{playlist_no_wm}", f"带水印 https://jrlyy.fusionfintrade.com:39100/{playlist_wm}"]
         log_multiline("INFO", *log_text_list, log_path=self.log_file_path)
         self.sm.update_status(uid, "running")
 
