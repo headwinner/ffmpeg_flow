@@ -86,7 +86,7 @@ class StreamController:
     # ----------------------
     # 启动转流
     # ----------------------
-    def start_stream(self, uid, gpu=False, max_retries=3):
+    def start_stream(self, uid, gpu=False, max_retries=30):
         """启动流，同时启动监控线程自动重启"""
         if uid in self.processes:
             self.sm.update_status(uid, "running")
@@ -263,8 +263,6 @@ class StreamController:
                     self.wm_paths_cache[uid] = dict(watermarks)
                     self.wm_md5_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
                     self.url_cache[uid] = url
-
-            time.sleep(interval)
 
             time.sleep(interval)
 
