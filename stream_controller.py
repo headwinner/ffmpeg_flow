@@ -278,8 +278,8 @@ class StreamController:
         return [
             *vcodec,
             "-r", "10",  # 帧率
-            "-b:v", "4000k",  # 码率
-            "-maxrate", "5000k",
+            "-b:v", "3000k",  # 码率
+            "-maxrate", "4000k",
             "-bufsize", "10000k",
             "-c:a", "aac",
             "-f", "hls",
