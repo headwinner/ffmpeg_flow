@@ -86,7 +86,7 @@ class StreamController:
     # ----------------------
     # 启动转流
     # ----------------------
-    def start_stream(self, uid, gpu=False, max_retries=30):
+    def start_stream(self, uid, gpu=True, max_retries=30):
         """启动流，同时启动监控线程自动重启"""
         if uid in self.processes:
             self.sm.update_status(uid, "running")
@@ -175,12 +175,12 @@ class StreamController:
 
     def _hls_output_args(self, playlist, gpu=False):
         if gpu:
-            vcodec = ["-c:v", "h264_nvenc", "-preset", "p3", "-cq", "19"]
+            vcodec = ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "19"]
         else:
-            vcodec = ["-c:v", "libx264", "-preset", "slow", "-crf", "20"]
+            vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
         return [
             *vcodec,
-            "-r", "25",  # 帧率
+            "-r", "10",  # 帧率
             "-b:v", "4000k",  # 码率
             "-maxrate", "5000k",
             "-bufsize", "10000k",
