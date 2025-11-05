@@ -102,8 +102,10 @@ class StreamController:
                         device_name = gpu_name
                     else:
                         device_name = "NVIDIA GPU (未知型号)"
+                        use_gpu = False
                 except Exception:
                     device_name = "GPU 可用但无法通过 nvidia-smi 获取名称"
+                    use_gpu = False
             else:
                 # 检测 CPU 型号
                 try:
