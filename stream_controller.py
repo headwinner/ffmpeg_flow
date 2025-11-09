@@ -51,7 +51,7 @@ class StreamController:
             if self.has_gpu:
                 log("INFO", f"使用 GPU: {self.device_name} 进行转流", log_path=self.log_file_path)
             else:
-                log("WARNING", f"GPU 不可用，将使用 CPU: {self.device_name} 进行转流", log_path=self.log_file_path)
+                log("WARN ", f"GPU 不可用，将使用 CPU: {self.device_name} 进行转流", log_path=self.log_file_path)
         else:
             log("INFO", f"使用 CPU: {self.device_name} 进行转流", log_path=self.log_file_path)
 
@@ -189,7 +189,7 @@ class StreamController:
 
         if uid in self.processes:
             self.sm.update_status(uid, "running")
-            log("WARNING", f"{uid} 已经在转流中", log_path=self.log_file_path)
+            log("WARN ", f"{uid} 已经在转流中", log_path=self.log_file_path)
             return
 
         info = self.sm.get_info(uid)
@@ -197,24 +197,13 @@ class StreamController:
             log("FAIL", f"UID {uid} 未找到绑定信息", log_path=self.log_file_path)
             return
 
-        url = info["url"]
         watermarks = info.get("water_mark", {})  # dict {wm_uid: path}
         wm_paths = [path for path in watermarks.values() if path]
-        
-        # 记录启动信息
-        log_multiline(
-            "INFO",
-            f"准备启动转流 {uid}",
-            f"URL: {url}",
-            f"水印数量: {len(wm_paths)}",
-            f"水印详情: {watermarks}",
-            log_path=self.log_file_path
-        )
 
         playlist_no_wm = info.get("hls_no_wm")
         playlist_wm = info.get("hls_wm")
 
-        cmd = [FFMPEG_PATH, "-loglevel", "error", "-i", url]
+        cmd = [FFMPEG_PATH, "-loglevel", "error"]
         for wm in wm_paths:
             cmd += ["-i", wm]
 
@@ -246,11 +235,22 @@ class StreamController:
         attempt = 0
         while attempt < max_retries:
             try:
+                info = self.sm.get_info(uid)
+                if not info:
+                    log("FAIL", f"UID {uid} 未找到绑定信息", log_path=self.log_file_path)
+                    return
+
+                url = info["url"]  # 在重试机制内获取 URL
+
+                # 更新 FFmpeg 命令中的 URL
+                cmd[2] = url  # 修改 -i 后的 URL
+                log("INFO", f"启动 FFmpeg {uid} ULR={url}", log_path=self.log_file_path)
+
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    bufsize=0  # 避免 RuntimeWarning
+                    bufsize=0  # 避免 RuntimeWarn
                 )
                 self.processes[uid] = process
 
@@ -265,6 +265,7 @@ class StreamController:
                     log("FAIL", f"FFmpeg {uid} 异常退出，返回码 {process.returncode}", log_path=self.log_file_path)
                 else:
                     log("INFO", f"FFmpeg {uid} 正常退出", log_path=self.log_file_path)
+
                 attempt += 1
                 if attempt < max_retries:
                     log("INFO", f"等待 10 秒后重启 {uid} (尝试 {attempt + 1}/{max_retries})", log_path=self.log_file_path)
@@ -306,7 +307,7 @@ class StreamController:
     # ----------------------
     def stop_stream(self, uid):
         if uid not in self.processes:
-            log("WARNING", f"{uid} 不在转流列表中", log_path=self.log_file_path)
+            log("WARN ", f"{uid} 不在转流列表中", log_path=self.log_file_path)
             sm.update_status(uid, "stopped")
             return
         process = self.processes.pop(uid)
