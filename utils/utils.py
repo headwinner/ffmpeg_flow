@@ -39,7 +39,7 @@ def log(level: str, message: str, log_path: Optional[str] = None):
     colored_message = f"{color}{formatted_message}{reset}"
 
     # 控制台输出（安全）
-    # _safe_console_write(colored_message)
+    _safe_console_write(colored_message)
 
     # 文件写入
     if log_path:
@@ -68,8 +68,8 @@ def log_multiline(level: str, *messages, log_path: Optional[str] = None):
             else:
                 formatted_line = f"{indent}{line}"
             log_lines_for_file.append(formatted_line)
-    #         # 控制台输出带颜色
-    #         # _safe_console_write(f"{color}{formatted_line}{reset}")
+            # 控制台输出带颜色
+            _safe_console_write(f"{color}{formatted_line}{reset}")
 
     # 文件写入
     if log_path:

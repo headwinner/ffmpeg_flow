@@ -27,6 +27,10 @@ class StreamController:
         self.wm_md5_cache = {}  # { uid: {wm_uid: md5, ...}, ... }
         self.url_cache = {}  # { uid: url }
 
+        # 检测设备
+        self.use_gpu = True
+        self.has_gpu, self.device_name = self.check_device(self.use_gpu)
+
         # 初始化缓存
         for uid, info in self.sm.list_bindings().items():
             watermarks = info.get("water_mark", {}) or {}
@@ -43,6 +47,14 @@ class StreamController:
         os.makedirs(log_dir, exist_ok=True)
         self.log_file_path = os.path.join(log_dir, "stream_controller.log")
 
+        if self.use_gpu:
+            if self.has_gpu:
+                log("INFO", f"使用 GPU: {self.device_name} 进行转流", log_path=self.log_file_path)
+            else:
+                log("WARNING", f"GPU 不可用，将使用 CPU: {self.device_name} 进行转流", log_path=self.log_file_path)
+        else:
+            log("INFO", f"使用 CPU: {self.device_name} 进行转流", log_path=self.log_file_path)
+
         log_multiline(
             "INFO",
             f"wm_paths_cache: {self.wm_paths_cache}",
@@ -50,6 +62,89 @@ class StreamController:
             f"url_cache: {self.url_cache}",
             log_path=self.log_file_path
         )
+
+
+    # ----------------------
+    # 检测系统设备（GPU 或 CPU）
+    # ----------------------
+    def check_device(self, use_gpu=True):
+        """ 检查系统设备（GPU 或 CPU），返回 (是否启用GPU, 设备名称) """
+        try:
+            import platform
+
+            # 默认结果
+            has_gpu = False
+            device_name = "未知"
+
+            # 检查 ffmpeg 是否支持 GPU 编码
+            result = subprocess.run(
+                [FFMPEG_PATH, "-hide_banner", "-encoders"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            has_gpu = "h264_nvenc" in result.stdout
+
+            # 获取系统平台
+            system = platform.system().lower()
+
+            # 优先检测 GPU（如果启用）
+            if has_gpu and use_gpu:
+                try:
+                    smi_result = subprocess.run(
+                        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True
+                    )
+                    gpu_name = smi_result.stdout.strip()
+                    if gpu_name:
+                        device_name = gpu_name
+                    else:
+                        device_name = "NVIDIA GPU (未知型号)"
+                        use_gpu = False
+                except Exception:
+                    device_name = "GPU 可用但无法通过 nvidia-smi 获取名称"
+                    use_gpu = False
+            else:
+                # 检测 CPU 型号
+                try:
+                    if system == "windows":
+                        # Windows 平台
+                        cpu_result = subprocess.run(
+                            ["wmic", "cpu", "get", "name"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
+                        lines = [l.strip() for l in cpu_result.stdout.splitlines() if l.strip()]
+                        if len(lines) > 1:
+                            device_name = lines[1]  # 第二行是CPU名称
+                        else:
+                            device_name = "CPU (型号未知)"
+                    elif system == "linux":
+                        # Linux 平台
+                        cpu_result = subprocess.run(
+                            ["cat", "/proc/cpuinfo"],
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
+                        for line in cpu_result.stdout.split('\n'):
+                            if "model name" in line:
+                                device_name = line.split(":")[1].strip()
+                                break
+                    else:
+                        device_name = f"未知系统: {system}"
+                except Exception:
+                    device_name = "CPU (型号未知)"
+
+            return has_gpu and use_gpu, device_name
+
+        except Exception as e:
+            log("FAIL", f"检测设备异常: {e}", log_path=self.log_file_path)
+            return False, "未知"
+
 
     # ----------------------
     # 计算文件 md5
@@ -86,8 +181,12 @@ class StreamController:
     # ----------------------
     # 启动转流
     # ----------------------
-    def start_stream(self, uid, gpu=False, max_retries=3):
+    def start_stream(self, uid, max_retries=30):
         """启动流，同时启动监控线程自动重启"""
+        # 是否使用GPU
+        if self.use_gpu:
+            gpu = self.has_gpu
+
         if uid in self.processes:
             self.sm.update_status(uid, "running")
             log("WARNING", f"{uid} 已经在转流中", log_path=self.log_file_path)
@@ -185,14 +284,14 @@ class StreamController:
 
     def _hls_output_args(self, playlist, gpu=False):
         if gpu:
-            vcodec = ["-c:v", "h264_nvenc", "-preset", "p3", "-cq", "19"]
+            vcodec = ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "19"]
         else:
-            vcodec = ["-c:v", "libx264", "-preset", "slow", "-crf", "20"]
+            vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
         return [
             *vcodec,
-            "-r", "25",  # 帧率
-            "-b:v", "4000k",  # 码率
-            "-maxrate", "5000k",
+            "-r", "10",  # 帧率
+            "-b:v", "3000k",  # 码率
+            "-maxrate", "4000k",
             "-bufsize", "10000k",
             "-c:a", "aac",
             "-f", "hls",
@@ -276,8 +375,6 @@ class StreamController:
                     self.wm_paths_cache[uid] = dict(watermarks)
                     self.wm_md5_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
                     self.url_cache[uid] = url
-
-            time.sleep(interval)
 
             time.sleep(interval)
 
