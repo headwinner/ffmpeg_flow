@@ -106,7 +106,7 @@ class StreamController:
                 except Exception:
                     device_name = "GPU 可用但无法通过 nvidia-smi 获取名称"
                     use_gpu = False
-            else:
+            if not use_gpu:
                 # 检测 CPU 型号
                 try:
                     if system == "windows":
@@ -192,60 +192,66 @@ class StreamController:
             log("WARN ", f"{uid} 已经在转流中", log_path=self.log_file_path)
             return
 
-        info = self.sm.get_info(uid)
-        if not info:
-            log("FAIL", f"UID {uid} 未找到绑定信息", log_path=self.log_file_path)
-            return
+        # 启动独立线程监控 FFmpeg 进程，自动重启
+        threading.Thread(target=self._monitor_process, args=(uid, gpu, max_retries), daemon=True).start()
 
-        watermarks = info.get("water_mark", {})  # dict {wm_uid: path}
-        wm_paths = [path for path in watermarks.values() if path]
-
-        playlist_no_wm = info.get("hls_no_wm")
-        playlist_wm = info.get("hls_wm")
-
-        cmd = [FFMPEG_PATH, "-loglevel", "error"]
-        for wm in wm_paths:
-            cmd += ["-i", wm]
-
-        if wm_paths:
-            filter_complex, last = self._build_filter(watermarks)
-            cmd += [
-                "-filter_complex", filter_complex,
-                "-map", last, "-map", "0:a?",
-                *self._hls_output_args(playlist_wm, gpu),
-                "-map", "0:v", "-map", "0:a?",
-                *self._hls_output_args(playlist_no_wm, gpu),
-            ]
-        else:
-            cmd += [
-                "-map", "0:v", "-map", "0:a?",
-                *self._hls_output_args(playlist_no_wm, gpu),
-                "-map", "0:v", "-map", "0:a?",
-                *self._hls_output_args(playlist_wm, gpu),
-            ]
-
-        log_text_list = [f"启动转流 {uid}", f"无水印 https://jrlyy.fusionfintrade.com:39100/{playlist_no_wm}", f"带水印 https://jrlyy.fusionfintrade.com:39100/{playlist_wm}"]
-        log_multiline("INFO", *log_text_list, log_path=self.log_file_path)
-        self.sm.update_status(uid, "running")
-
-        # 开启独立线程监控 FFmpeg 进程，自动重启
-        threading.Thread(target=self._monitor_process, args=(uid, cmd, gpu, max_retries), daemon=True).start()
-
-    def _monitor_process(self, uid, cmd, gpu, max_retries):
+    def _monitor_process(self, uid, gpu, max_retries):
         attempt = 0
         while attempt < max_retries:
             try:
+                # 获取信息，包括URL
                 info = self.sm.get_info(uid)
                 if not info:
                     log("FAIL", f"UID {uid} 未找到绑定信息", log_path=self.log_file_path)
                     return
 
-                url = info["url"]  # 在重试机制内获取 URL
+                url = info["url"]
+                watermarks = info.get("water_mark", {})  # dict {wm_uid: path}
+                wm_paths = [path for path in watermarks.values() if path]
 
-                # 更新 FFmpeg 命令中的 URL
-                cmd[2] = url  # 修改 -i 后的 URL
-                log("INFO", f"启动 FFmpeg {uid} ULR={url}", log_path=self.log_file_path)
+                # 记录启动信息
+                log_multiline(
+                    "INFO",
+                    f"准备启动转流 {uid}",
+                    f"URL: {url}",
+                    f"水印数量: {len(wm_paths)}",
+                    f"水印详情: {watermarks}",
+                    log_path=self.log_file_path
+                )
 
+                playlist_no_wm = info.get("hls_no_wm")
+                playlist_wm = info.get("hls_wm")
+
+                cmd = [FFMPEG_PATH, "-loglevel", "error", "-i", url]
+                for wm in wm_paths:
+                    cmd += ["-i", wm]
+
+                if wm_paths:
+                    filter_complex, last = self._build_filter(watermarks)
+                    cmd += [
+                        "-filter_complex", filter_complex,
+                        "-map", last, "-map", "0:a?",
+                        *self._hls_output_args(playlist_wm, gpu),
+                        "-map", "0:v", "-map", "0:a?",
+                        *self._hls_output_args(playlist_no_wm, gpu),
+                    ]
+                else:
+                    cmd += [
+                        "-map", "0:v", "-map", "0:a?",
+                        *self._hls_output_args(playlist_no_wm, gpu),
+                        "-map", "0:v", "-map", "0:a?",
+                        *self._hls_output_args(playlist_wm, gpu),
+                    ]
+
+                log_text_list = [
+                    f"启动转流 {uid}",
+                    f"无水印 https://jrlyy.fusionfintrade.com:39100/{playlist_no_wm}",
+                    f"带水印 https://jrlyy.fusionfintrade.com:39100/{playlist_wm}"
+                ]
+                log_multiline("INFO", *log_text_list, log_path=self.log_file_path)
+                self.sm.update_status(uid, "running")
+
+                # 启动 FFmpeg 进程
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
@@ -270,18 +276,13 @@ class StreamController:
                 if attempt < max_retries:
                     log("INFO", f"等待 10 秒后重启 {uid} (尝试 {attempt + 1}/{max_retries})", log_path=self.log_file_path)
                     time.sleep(10)
+
             except Exception as e:
                 attempt += 1
                 log("FAIL", f"启动 {uid} 异常: {e}", log_path=self.log_file_path)
                 if attempt < max_retries:
                     log("INFO", f"等待 10 秒后重试 {uid} (尝试 {attempt + 1}/{max_retries})", log_path=self.log_file_path)
                     time.sleep(10)
-
-        # 超过最大尝试次数仍失败
-        if uid in self.processes:
-            self.processes.pop(uid, None)
-        self.sm.update_status(uid, "stopped")
-        log("FAIL", f"转流 {uid} 达到最大重试次数，停止转流", log_path=self.log_file_path)
 
     def _hls_output_args(self, playlist, gpu=False):
         if gpu:
