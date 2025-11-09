@@ -101,6 +101,16 @@ class StreamController:
         url = info["url"]
         watermarks = info.get("water_mark", {})  # dict {wm_uid: path}
         wm_paths = [path for path in watermarks.values() if path]
+        
+        # 记录启动信息
+        log_multiline(
+            "INFO",
+            f"准备启动转流 {uid}",
+            f"URL: {url}",
+            f"水印数量: {len(wm_paths)}",
+            f"水印详情: {watermarks}",
+            log_path=self.log_file_path
+        )
 
         playlist_no_wm = info.get("hls_no_wm")
         playlist_wm = info.get("hls_wm")
@@ -244,7 +254,11 @@ class StreamController:
                 changed = False
 
                 # URL 或水印路径变化
-                if url != cached_url or watermarks != cached_paths:
+                if url != cached_url:
+                    log("INFO", f"检测到 URL 变化: {cached_url} -> {url}", log_path=self.log_file_path)
+                    changed = True
+                if watermarks != cached_paths:
+                    log("INFO", f"检测到水印路径变化: {cached_paths} -> {watermarks}", log_path=self.log_file_path)
                     changed = True
                 else:
                     # md5 不同也认为变化
@@ -255,7 +269,6 @@ class StreamController:
                             break
 
                 if changed:
-                    log("INFO", f"检测到 URL 或水印变化，重启流 uid={uid}", log_path=self.log_file_path)
                     self.stop_stream(uid)
                     time.sleep(1)
                     self.start_stream(uid)
