@@ -1,230 +1,127 @@
+import platform
 import subprocess
 import os
 import signal
 import threading
 import time
 import hashlib
+import traceback
 from datetime import datetime
-from config import FLOW_URL
+import psutil
 from storage import sm
-from utils.utils import log, log_multiline
+from utils.utils import log
 from utils.init_ffmpeg import init_ffmpeg
 
 FFMPEG_PATH = init_ffmpeg()
 
 
-class StreamController:
+
+class FFmpegProcessManager:
     """
-    管理多路视频流转 HLS + 多水印
-    支持开启/关闭某条流，检测水印变化自动重启
+    独立进程管理类：周期读取 info，根据 status 控制 FFmpeg 进程
+    负责启动/停止/重启/错误重试/清理未知 ffmpeg 进程
+    状态机：
+        need_start → starting → started → need_stop → stopping → stopped
+                                     ↘
+                                      → need_restart → restarting → started
     """
 
-    def __init__(self):
-        self.processes = {}  # key: uid, value: subprocess.Popen
-        self.sm = sm
-        # 拆成三个缓存：路径快照、md5缓存、url缓存
-        self.wm_paths_cache = {}  # { uid: {wm_uid: path, ...}, ... }
-        self.wm_md5_cache = {}  # { uid: {wm_uid: md5, ...}, ... }
-        self.url_cache = {}  # { uid: url }
+    def __init__(self, storage_manager, use_gpu=True, has_gpu=False, device_name="CPU"):
+        self.sm = storage_manager
+        self.use_gpu = use_gpu
+        self.has_gpu = has_gpu
+        self.device_name = device_name
+        self.processes = {}  # uid -> subprocess.Popen
+        self.running = True
 
-        # 检测设备
-        self.use_gpu = True
-        self.has_gpu, self.device_name = self.check_device(self.use_gpu)
-
-        # 初始化缓存
-        for uid, info in self.sm.list_bindings().items():
-            watermarks = info.get("water_mark", {}) or {}
-            self.wm_paths_cache[uid] = dict(watermarks)
-            self.wm_md5_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
-            self.url_cache[uid] = info.get("url")
-
-        # ------------------------
-        # 日志文件路径
-        # ------------------------
+        # 日志目录
         now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d_%H-%M-%S")  # YYYY-MM-DD_HH-MM-SS
+        date_str = now.strftime("%Y-%m-%d_%H-%M-%S")
         log_dir = os.path.join("logs", date_str)
         os.makedirs(log_dir, exist_ok=True)
         self.log_file_path = os.path.join(log_dir, "stream_controller.log")
 
-        if self.use_gpu:
-            if self.has_gpu:
-                log("INFO", f"使用 GPU: {self.device_name} 进行转流", log_path=self.log_file_path)
-            else:
-                log("WARN ", f"GPU 不可用，将使用 CPU: {self.device_name} 进行转流", log_path=self.log_file_path)
-        else:
-            log("INFO", f"使用 CPU: {self.device_name} 进行转流", log_path=self.log_file_path)
+        threading.Thread(target=self._auto_manager_loop, daemon=True).start()
 
-        log_multiline(
-            "INFO",
-            f"wm_paths_cache: {self.wm_paths_cache}",
-            f"wm_md5_cache: {self.wm_md5_cache}",
-            f"url_cache: {self.url_cache}",
-            log_path=self.log_file_path
-        )
+    # ------------------------------------
+    # 主循环：周期检测并根据状态操作
+    # ------------------------------------
+    def _auto_manager_loop(self):
+        while self.running:
+            try:
+                bindings = self.sm.list_bindings()
+                valid_uids = set(bindings.keys())
+                # 清理未知 ffmpeg
+                self._kill_unknown_ffmpeg(valid_uids)
 
+                for uid, info in bindings.items():
+                    status = info.get("status")
 
-    # ----------------------
-    # 检测系统设备（GPU 或 CPU）
-    # ----------------------
-    def check_device(self, use_gpu=True):
-        """ 检查系统设备（GPU 或 CPU），返回 (是否启用GPU, 设备名称) """
+                    if status in ("need_start", "restarting"):
+                        self.sm.update_status(uid, "starting")
+                        self._start_ffmpeg(uid, info)
+                        self.sm.update_status(uid, "started")
+
+                    elif status == "need_stop":
+                        self.sm.update_status(uid, "stopping")
+                        self._stop_ffmpeg(uid)
+                        self.sm.update_status(uid, "stopped")
+
+                    elif status == "need_restart":
+                        self.sm.update_status(uid, "restarting")
+                        self._stop_ffmpeg(uid)
+                        self._start_ffmpeg(uid, info)
+                        self.sm.update_status(uid, "started")
+
+                    elif status == "started":
+                        # 检测异常退出
+                        if uid not in self.processes or self.processes[uid].poll() is not None:
+                            log("FAIL", f"[监控] {uid} 异常退出，标记 need_restart", log_path=self.log_file_path)
+                            self.sm.update_status(uid, "need_restart")
+
+                time.sleep(10)
+
+            except Exception as e:
+                log("FAIL", f"[进程管理] 主循环异常: {e}", log_path=self.log_file_path)
+                time.sleep(5)
+
+    # ------------------------------------
+    # 杀死陌生 ffmpeg 进程
+    # ------------------------------------
+    def _kill_unknown_ffmpeg(self, valid_uids):
         try:
-            import platform
-
-            # 默认结果
-            has_gpu = False
-            device_name = "未知"
-
-            # 检查 ffmpeg 是否支持 GPU 编码
-            result = subprocess.run(
-                [FFMPEG_PATH, "-hide_banner", "-encoders"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-            has_gpu = "h264_nvenc" in result.stdout
-
-            # 获取系统平台
-            system = platform.system().lower()
-
-            # 优先检测 GPU（如果启用）
-            if has_gpu and use_gpu:
+            killed = []
+            for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
                 try:
-                    smi_result = subprocess.run(
-                        ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
-                    gpu_name = smi_result.stdout.strip()
-                    if gpu_name:
-                        device_name = gpu_name
-                    else:
-                        device_name = "NVIDIA GPU (未知型号)"
-                        use_gpu = False
-                except Exception:
-                    device_name = "GPU 可用但无法通过 nvidia-smi 获取名称"
-                    use_gpu = False
-            if not use_gpu:
-                # 检测 CPU 型号
-                try:
-                    if system == "windows":
-                        # Windows 平台
-                        cpu_result = subprocess.run(
-                            ["wmic", "cpu", "get", "name"],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True
-                        )
-                        lines = [l.strip() for l in cpu_result.stdout.splitlines() if l.strip()]
-                        if len(lines) > 1:
-                            device_name = lines[1]  # 第二行是CPU名称
-                        else:
-                            device_name = "CPU (型号未知)"
-                    elif system == "linux":
-                        # Linux 平台
-                        cpu_result = subprocess.run(
-                            ["cat", "/proc/cpuinfo"],
-                            stdout=subprocess.PIPE,
-                            stderr=subprocess.PIPE,
-                            text=True
-                        )
-                        for line in cpu_result.stdout.split('\n'):
-                            if "model name" in line:
-                                device_name = line.split(":")[1].strip()
-                                break
-                    else:
-                        device_name = f"未知系统: {system}"
-                except Exception:
-                    device_name = "CPU (型号未知)"
+                    name = proc.info['name']
+                    cmdline = " ".join(proc.info['cmdline']) if proc.info['cmdline'] else ""
+                    if not name:
+                        continue
 
-            return has_gpu and use_gpu, device_name
+                    if "ffmpeg" in name.lower():
+                        if not any(uid in cmdline for uid in valid_uids):
+                            pid = proc.info['pid']
+                            killed.append(pid)
+                            proc.terminate()
+                            log("WARN", f"检测到未知 ffmpeg 进程 {pid}，正在终止", log_path=self.log_file_path)
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
+
+            if killed:
+                log("INFO", f"已清理未知 ffmpeg 进程: {killed}", log_path=self.log_file_path)
 
         except Exception as e:
-            log("FAIL", f"检测设备异常: {e}", log_path=self.log_file_path)
-            return False, "未知"
+            log("FAIL", f"杀死未知 ffmpeg 进程失败: {e}", log_path=self.log_file_path)
 
-
-    # ----------------------
-    # 计算文件 md5
-    # ----------------------
-    @staticmethod
-    def _file_md5(path):
-        if not os.path.exists(path):
-            return None
-        with open(path, "rb") as f:
-            return hashlib.md5(f.read()).hexdigest()
-
-    # ----------------------
-    # 构建 FFmpeg filter_complex 叠加多水印（完全覆盖）
-    # ----------------------
-    def _build_filter(self, watermark_paths):
-        filters = ""
-        last = "[0:v]"
-        for i, path in enumerate(watermark_paths.values()):
-            filters += f"[{i + 1}:v]scale=iw:ih[wm{i}];"
-            filters += f"{last}[wm{i}]overlay=0:0:format=auto[v{i}];"
-            last = f"[v{i}]"
-        if filters.endswith(";"):
-            filters = filters[:-1]
-        return filters, last
-
-    def _capture_stderr(self, uid, process):
-        """实时捕获 FFmpeg stderr 并写入日志"""
-        for line in iter(process.stderr.readline, b''):
-            if not line:
-                break
-            log("FAIL", f"[FFMPEG] {uid}: {line.decode(errors='ignore').strip()}",
-                log_path=self.log_file_path)
-
-    # ----------------------
-    # 启动转流
-    # ----------------------
-    def start_stream(self, uid, max_retries=30):
-        """启动流，同时启动监控线程自动重启"""
-        # 是否使用GPU
-        if self.use_gpu:
-            gpu = self.has_gpu
-
-        if uid in self.processes:
-            self.sm.update_status(uid, "running")
-            log("WARN ", f"{uid} 已经在转流中", log_path=self.log_file_path)
-            return
-
-        # 启动独立线程监控 FFmpeg 进程，自动重启
-        threading.Thread(target=self._monitor_process, args=(uid, gpu, max_retries), daemon=True).start()
-
-    def _monitor_process(self, uid, gpu, max_retries):
-        attempt = 0
-        while attempt < max_retries:
+    # ------------------------------------
+    # 启动 FFmpeg
+    # ------------------------------------
+    def _start_ffmpeg(self, uid, info, max_retries=5):
+        for attempt in range(1, max_retries + 1):
             try:
-                # 获取信息，包括URL
-                info = self.sm.get_info(uid)
-                if not info:
-                    log("FAIL", f"UID {uid} 未找到绑定信息", log_path=self.log_file_path)
-                    return
-
-                url = info["url"]
-                status = info["status"]
-
-                if status != "running":
-                    log("FAIL", f"{uid} 未在运行中", log_path=self.log_file_path)
-                    return
-
-                watermarks = info.get("water_mark", {})  # dict {wm_uid: path}
-                wm_paths = [path for path in watermarks.values() if path]
-
-                # 记录启动信息
-                log_multiline(
-                    "INFO",
-                    f"准备启动转流 {uid}",
-                    f"URL: {url}",
-                    f"水印数量: {len(wm_paths)}",
-                    f"水印详情: {watermarks}",
-                    log_path=self.log_file_path
-                )
-
+                url = info.get("url")
+                watermarks = info.get("water_mark", {}) or {}
+                wm_paths = list(watermarks.values())
                 playlist_no_wm = info.get("hls_no_wm")
                 playlist_wm = info.get("hls_wm")
 
@@ -237,68 +134,83 @@ class StreamController:
                     cmd += [
                         "-filter_complex", filter_complex,
                         "-map", last, "-map", "0:a?",
-                        *self._hls_output_args(playlist_wm, gpu),
+                        *self._hls_output_args(playlist_wm, self.use_gpu and self.has_gpu),
                         "-map", "0:v", "-map", "0:a?",
-                        *self._hls_output_args(playlist_no_wm, gpu),
+                        *self._hls_output_args(playlist_no_wm, self.use_gpu and self.has_gpu)
                     ]
                 else:
                     cmd += [
                         "-map", "0:v", "-map", "0:a?",
-                        *self._hls_output_args(playlist_no_wm, gpu),
-                        "-map", "0:v", "-map", "0:a?",
-                        *self._hls_output_args(playlist_wm, gpu),
+                        *self._hls_output_args(playlist_no_wm, self.use_gpu and self.has_gpu)
                     ]
 
-                log_text_list = [
-                    f"启动转流 {uid}",
-                    f"无水印 https://jrlyy.fusionfintrade.com:39100/{playlist_no_wm}",
-                    f"带水印 https://jrlyy.fusionfintrade.com:39100/{playlist_wm}"
-                ]
-                log_multiline("INFO", *log_text_list, log_path=self.log_file_path)
-                self.sm.update_status(uid, "running")
-
-                # 启动 FFmpeg 进程
                 process = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
-                    bufsize=0  # 避免 RuntimeWarn
+                    bufsize=0
                 )
                 self.processes[uid] = process
-
-                # 启动 stderr 捕获线程
                 threading.Thread(target=self._capture_stderr, args=(uid, process), daemon=True).start()
-
-                log("SUCCESS", f"转流 {uid} 启动成功 (尝试 {attempt + 1})", log_path=self.log_file_path)
-
-                # 等待 FFmpeg 结束
-                process.wait()
-                if process.returncode != 0:
-                    log("FAIL", f"FFmpeg {uid} 异常退出，返回码 {process.returncode}", log_path=self.log_file_path)
-                else:
-                    log("INFO", f"FFmpeg {uid} 正常退出", log_path=self.log_file_path)
-
-                attempt += 1
-                if attempt < max_retries:
-                    log("INFO", f"等待 10 秒后重启 {uid} (尝试 {attempt + 1}/{max_retries})", log_path=self.log_file_path)
-                    time.sleep(10)
+                log("SUCCESS", f"启动 FFmpeg 成功: {uid}", log_path=self.log_file_path)
+                return
 
             except Exception as e:
-                attempt += 1
-                log("FAIL", f"启动 {uid} 异常: {e}", log_path=self.log_file_path)
-                if attempt < max_retries:
-                    log("INFO", f"等待 10 秒后重试 {uid} (尝试 {attempt + 1}/{max_retries})", log_path=self.log_file_path)
-                    time.sleep(10)
+                log("FAIL", f"启动 {uid} 失败 (尝试 {attempt}/{max_retries}): {e}", log_path=self.log_file_path)
+                time.sleep(5)
 
-    def _hls_output_args(self, playlist, gpu=False):
+        log("FAIL", f"{uid} 启动失败超过最大重试次数", log_path=self.log_file_path)
+        self.sm.update_status(uid, "need_restart")
+
+    # ------------------------------------
+    # 停止 FFmpeg
+    # ------------------------------------
+    def _stop_ffmpeg(self, uid):
+        try:
+            process = self.processes.pop(uid)
+            os.kill(process.pid, signal.SIGTERM)
+            log("INFO", f"停止转流 {uid}", log_path=self.log_file_path)
+        except Exception as e:
+            log("FAIL", f"停止 {uid} 失败: {e}", log_path=self.log_file_path)
+
+    # ------------------------------------
+    # 捕获 FFmpeg stderr
+    # ------------------------------------
+    def _capture_stderr(self, uid, process):
+        for line in iter(process.stderr.readline, b''):
+            if not line:
+                break
+            log("FAIL", f"[FFMPEG] {uid}: {line.decode(errors='ignore').strip()}",
+                log_path=self.log_file_path)
+
+    # ------------------------------------
+    # 构建水印滤镜
+    # ------------------------------------
+    @staticmethod
+    def _build_filter(watermark_paths):
+        filters = ""
+        last = "[0:v]"
+        for i, path in enumerate(watermark_paths.values()):
+            filters += f"[{i + 1}:v]scale=iw:ih[wm{i}];"
+            filters += f"{last}[wm{i}]overlay=0:0:format=auto[v{i}];"
+            last = f"[v{i}]"
+        if filters.endswith(";"):
+            filters = filters[:-1]
+        return filters, last
+
+    # ------------------------------------
+    # 输出 HLS 参数
+    # ------------------------------------
+    @staticmethod
+    def _hls_output_args(playlist, gpu=False):
         if gpu:
             vcodec = ["-c:v", "h264_nvenc", "-preset", "p2", "-cq", "19"]
         else:
             vcodec = ["-c:v", "libx264", "-preset", "medium", "-crf", "20"]
         return [
             *vcodec,
-            "-r", "10",  # 帧率
-            "-b:v", "3000k",  # 码率
+            "-r", "10",
+            "-b:v", "3000k",
             "-maxrate", "4000k",
             "-bufsize", "10000k",
             "-c:a", "aac",
@@ -309,49 +221,60 @@ class StreamController:
             playlist
         ]
 
-    # ----------------------
-    # 停止转流
-    # ----------------------
-    def stop_stream(self, uid):
-        if uid not in self.processes:
-            log("WARN ", f"{uid} 不在转流列表中", log_path=self.log_file_path)
-            sm.update_status(uid, "stopped")
-            return
-        process = self.processes.pop(uid)
-        os.kill(process.pid, signal.SIGTERM)
-        sm.update_status(uid, "stopped")
-        log("INFO", f"已停止转流 {uid}", log_path=self.log_file_path)
 
-    # ----------------------
-    # 停止所有流
-    # ----------------------
-    def stop_all(self):
-        for uid, process in list(self.processes.items()):
-            try:
-                if process.poll() is None:
-                    process.terminate()
-                    log("INFO", f"已停止转流 {uid}", log_path=self.log_file_path)
-            except Exception as e:
-                log("FAIL", f"停止转流 {uid} 失败: {e}", log_path=self.log_file_path)
-        self.processes.clear()
+class StreamController:
+    """只负责状态、缓存和水印变化检测"""
 
-    # ----------------------
-    # 查询正在运行的流
-    # ----------------------
-    def list_running(self):
-        return list(self.processes.keys())
+    def __init__(self, sm):
+        self.sm = sm
+        self.wm_paths_cache = {}
+        self.wm_md5_cache = {}
+        self.url_cache = {}
 
-    # ----------------------
-    # 监控水印变化
-    # ----------------------
+        self.use_gpu = True
+        self.has_gpu, self.device_name = self.check_device()
+        now = datetime.now()
+        log_dir = os.path.join("logs", now.strftime("%Y-%m-%d_%H-%M-%S"))
+        os.makedirs(log_dir, exist_ok=True)
+        self.log_file_path = os.path.join(log_dir, "stream_controller.log")
+
+        # 初始化缓存
+        for uid, info in self.sm.list_bindings().items():
+            watermarks = info.get("water_mark", {}) or {}
+            self.wm_paths_cache[uid] = dict(watermarks)
+            self.wm_md5_cache[uid] = {wm_uid: self._file_md5(p) for wm_uid, p in watermarks.items()}
+            self.url_cache[uid] = info.get("url")
+
+        # 启动独立进程管理器
+        self.process_manager = FFmpegProcessManager(
+            storage_manager=self.sm,
+            use_gpu=self.use_gpu,
+            has_gpu=self.has_gpu,
+            device_name=self.device_name
+        )
+
+    def check_device(self):
+        try:
+            result = subprocess.run(
+                [FFMPEG_PATH, "-hide_banner", "-encoders"],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
+            )
+            has_gpu = "h264_nvenc" in result.stdout
+            return has_gpu, "GPU" if has_gpu else "CPU"
+        except Exception:
+            return False, "未知"
+
+    @staticmethod
+    def _file_md5(path):
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as f:
+            return hashlib.md5(f.read()).hexdigest()
+
     def monitor_watermarks(self, interval=10):
-        """循环检测水印和 URL 变化，发现变化就重启流"""
+        """监控 URL 和水印变化"""
         while True:
-            for uid in list(self.processes.keys()):
-                info = self.sm.get_info(uid)
-                if not info:
-                    continue
-
+            for uid, info in self.sm.list_bindings().items():
                 watermarks = info.get("water_mark", {}) or {}
                 url = info.get("url")
                 cached_paths = self.wm_paths_cache.get(uid)
@@ -359,16 +282,9 @@ class StreamController:
                 cached_url = self.url_cache.get(uid)
 
                 changed = False
-
-                # URL 或水印路径变化
-                if url != cached_url:
-                    log("INFO", f"检测到 URL 变化: {cached_url} -> {url}", log_path=self.log_file_path)
-                    changed = True
-                if watermarks != cached_paths:
-                    log("INFO", f"检测到水印路径变化: {cached_paths} -> {watermarks}", log_path=self.log_file_path)
+                if url != cached_url or watermarks != cached_paths:
                     changed = True
                 else:
-                    # md5 不同也认为变化
                     for wm_uid, path in watermarks.items():
                         md5 = self._file_md5(path)
                         if md5 != cached_md5s.get(wm_uid):
@@ -376,15 +292,12 @@ class StreamController:
                             break
 
                 if changed:
-                    self.stop_stream(uid)
-                    time.sleep(1)
-                    self.start_stream(uid)
-                    # 更新缓存
+                    log("INFO", f"检测到 {uid} 的水印或URL变化，更新状态", log_path=self.log_file_path)
+                    self.sm.update_status(uid, "restart")
                     self.wm_paths_cache[uid] = dict(watermarks)
-                    self.wm_md5_cache[uid] = {wm_uid: self._file_md5(path) for wm_uid, path in watermarks.items()}
+                    self.wm_md5_cache[uid] = {wm_uid: self._file_md5(p) for wm_uid, p in watermarks.items()}
                     self.url_cache[uid] = url
-
             time.sleep(interval)
 
 
-sc = StreamController()
+sc = StreamController(sm)

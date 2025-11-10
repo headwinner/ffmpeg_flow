@@ -167,6 +167,10 @@ class StorageManager:
         data = self._load()
         return data.get(uid, None)
 
+    def get_status(self, uid):
+        info = self.get_info(uid)
+        return info["status"]
+
 
     def get_url(self, uid):
         info = self.get_info(uid)
