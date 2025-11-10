@@ -42,6 +42,7 @@ def bind_stream():
 @app.route("/api/unbind/<uid>", methods=["DELETE"])
 def unbind_stream(uid):
     sm.remove_binding(uid)
+    sm.update_status(uid, "stopped")
     sc.stop_stream(uid)
     sm.clear_watermarks(uid)
     return success(f"{uid} 解绑成功")
@@ -52,7 +53,9 @@ def unbind_stream(uid):
 # ----------------------
 @app.route("/api/start/<uid>", methods=["POST"])
 def start_stream(uid):
+    sm.update_status(uid, "running")
     sc.start_stream(uid)
+
     return success(f"{uid} 转流已启动")
 
 
@@ -61,6 +64,7 @@ def start_stream(uid):
 # ----------------------
 @app.route("/api/stop/<uid>", methods=["POST"])
 def stop_stream(uid):
+    sm.update_status(uid, "stopped")
     sc.stop_stream(uid)
     return success(f"{uid} 转流已停止")
 
@@ -155,9 +159,11 @@ def delete_water_mark():
             return error("缺少参数 stream_uid")
 
         # 调用 storage 清空水印
+        sm.update_status(stream_uid, "stopped")
         sc.stop_stream(stream_uid)
         time.sleep(1)
         if sm.clear_watermarks(stream_uid):
+            sm.update_status(stream_uid, "running")
             sc.start_stream(stream_uid)
             return success("水印已清空", {"stream_uid": stream_uid})
         else:
