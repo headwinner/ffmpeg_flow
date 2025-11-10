@@ -206,6 +206,12 @@ class StreamController:
                     return
 
                 url = info["url"]
+                status = info["status"]
+
+                if status != "running":
+                    log("FAIL", f"{uid} 未在运行中", log_path=self.log_file_path)
+                    return
+
                 watermarks = info.get("water_mark", {})  # dict {wm_uid: path}
                 wm_paths = [path for path in watermarks.values() if path]
 
