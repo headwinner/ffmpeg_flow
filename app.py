@@ -206,7 +206,7 @@ monitor_thread.start()
 
 # ---------------------- 注册退出钩子 ----------------------
 def cleanup():
-    sc.stop_all()  # 调用 stop_all 停止所有流和 ffmpeg
+    sm.update_all_status("stopped")  # 调用 stop_all 停止所有流和 ffmpeg
 
 
 # 当 Python 解释器正常退出时调用

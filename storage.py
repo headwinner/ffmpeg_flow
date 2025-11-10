@@ -202,6 +202,20 @@ class StorageManager:
             return True
         return False
 
+    # ----------------------
+    # 更新所有流的状态
+    # ----------------------
+    def update_all_status(self, status):
+        data = self._load()
+        updated = False
+        for uid in data:
+            if data[uid].get("status") != status:
+                data[uid]["status"] = status
+                updated = True
+        if updated:
+            self._save(data)
+        return updated
+
 
     # ----------------------
     # 清空水印
