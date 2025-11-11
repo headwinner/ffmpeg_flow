@@ -396,21 +396,21 @@ class StreamController:
                 if url != cached_url or watermarks != cached_paths:
                     changed = True
                     if url != cached_url:
-                        changed_details.append(f"URL 从 {cached_url} 更新为 {url}")
+                        changed_details.append(f"URL更新")
                     if watermarks != cached_paths:
-                        changed_details.append(f"水印文件路径从 {cached_paths} 更新为 {watermarks}")
+                        changed_details.append(f"水印文件路径更新")
                 else:
                     for wm_uid, path in watermarks.items():
                         md5 = self._file_md5(path)
                         if md5 != cached_md5s.get(wm_uid):
                             changed = True
-                            changed_details.append(f"水印文件 {wm_uid} 的 MD5 值发生变化")
+                            changed_details.append(f"水印文件的 MD5 值发生变化")
                             break
 
                 if changed:
                     log_details = "; ".join(changed_details)
-                    log("INFO", f"检测到 {uid} 的配置变化: {log_details}，更新状态", log_path=self.log_file_path)
                     if info.get("status") not in ("need_stop", "stopped", "stopping"):
+                        log("INFO", f"检测到 {uid} 的配置变化: {log_details}，更新状态", log_path=self.log_file_path)
                         self.sm.update_status(uid, "need_restart")
                     self.wm_paths_cache[uid] = dict(watermarks)
                     self.wm_md5_cache[uid] = {wm_uid: self._file_md5(p) for wm_uid, p in watermarks.items()}
