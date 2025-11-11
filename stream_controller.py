@@ -186,7 +186,7 @@ class FFmpegProcessManager:
 
         except Exception as e:
             log("FAIL", f"启动 {uid} 失败: {e}", log_path=self.log_file_path)
-            self.sm.update_status(uid, "need_restart")
+            self.sm.update_status(uid, "need_start")
 
     # ------------------------------------
     # 停止 FFmpeg
