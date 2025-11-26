@@ -73,7 +73,7 @@ class FFmpegProcessManager:
 
                     elif status == "started":
                         # 检测异常退出
-                        if uid not in self.processes or self.processes[uid].poll() is not None:
+                        if self.processes[uid].poll() is not None:
                             log("FAIL", f"[监控] {uid} 异常退出，标记 need_restart", log_path=self.log_file_path)
                             self.sm.update_status(uid, "need_restart")
 
