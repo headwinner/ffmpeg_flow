@@ -42,6 +42,9 @@ class FFmpegProcessManager:
     # 主循环：周期检测并根据状态操作
     # ------------------------------------
     def _auto_manager_loop(self):
+        # 保存异常次数
+        error_counts = {}  # uid -> 异常次数
+
         while self.running:
             try:
                 bindings = self.sm.list_bindings()
@@ -57,12 +60,14 @@ class FFmpegProcessManager:
                         log("INFO", f"{uid} 启动中...", log_path=self.log_file_path)
                         self._start_ffmpeg(uid, info)
                         self.sm.update_status(uid, "started")
+                        error_counts[uid] = 0  # 启动成功，重置异常计数
 
                     elif status == "need_stop":
                         self.sm.update_status(uid, "stopping")
                         log("INFO", f"{uid} 停止中...", log_path=self.log_file_path)
                         self._stop_ffmpeg(uid)
                         self.sm.update_status(uid, "stopped")
+                        error_counts[uid] = 0  # 停止成功，重置异常计数
 
                     elif status == "need_restart":
                         self.sm.update_status(uid, "starting")
@@ -70,40 +75,32 @@ class FFmpegProcessManager:
                         self._stop_ffmpeg(uid)
                         self._start_ffmpeg(uid, info)
                         self.sm.update_status(uid, "started")
+                        error_counts[uid] = 0  # 重启成功，重置异常计数
 
                     elif status == "started":
-                        # 检测异常退出
-                        if self.processes[uid].poll() is not None:
-                            log("FAIL", f"[监控] {uid} 异常退出，标记 need_restart", log_path=self.log_file_path)
-                            self.sm.update_status(uid, "need_restart")
+                        proc = self.processes.get(uid)
+                        if proc is None or proc.poll() is not None:
+                            # 异常退出，增加计数
+                            error_counts[uid] = error_counts.get(uid, 0) + 1
+                            log("WARN", f"[监控] {uid} 异常退出，计数 {error_counts[uid]}", log_path=self.log_file_path)
 
-                    elif status == "stopped":
-                        # 检测进程是否仍在运行
-                        if uid in self.processes:
-                            process = self.processes[uid]
-                            # 如果进程仍在运行（poll() 返回 None）
-                            if process.poll() is None:
-                                try:
-                                    # 尝试杀死进程
-                                    pid = process.pid
-                                    os.kill(pid, signal.SIGTERM)  # 发送 SIGTERM 信号，优雅地终止进程
-                                    log("INFO", f"进程 {uid} (PID: {pid}) 未停止，已发送终止信号", log_path=self.log_file_path)
-                                except Exception as e:
-                                    log("FAIL", f"尝试终止进程 {uid} 失败: {e}", log_path=self.log_file_path)
-
+                            # 如果连续异常 >= 3，标记 need_restart
+                            if error_counts[uid] >= 3:
+                                log("FAIL", f"[监控] {uid} 异常退出 3 次，标记 need_restart", log_path=self.log_file_path)
+                                self.sm.update_status(uid, "need_restart")
+                                error_counts[uid] = 0  # 重置计数
                             else:
-                                # 进程已经退出，记录信息
-                                log("INFO", f"进程 {uid} 已经退出", log_path=self.log_file_path)
+                                # 等待 60 秒再检测下一轮
+                                time.sleep(60)
+                        else:
+                            # 正常运行，重置异常计数
+                            error_counts[uid] = 0
 
-                    # else:
-                    #     # 未知状态，统一设置为 need_stop
-                    #     log("WARN", f"{uid} 处于未知状态 {status}，标记为 need_stop", log_path=self.log_file_path)
-                    #     self.sm.update_status(uid, "need_stop")
-
-                time.sleep(10)
+                # 每轮循环可以加短延迟，避免 CPU 占用过高
+                time.sleep(1)
 
             except Exception as e:
-                log("FAIL", f"[进程管理] 主循环异常: {e}", log_path=self.log_file_path)
+                log("ERROR", f"_auto_manager_loop 异常: {e}", log_path=self.log_file_path)
                 time.sleep(5)
 
     # ------------------------------------
@@ -139,6 +136,7 @@ class FFmpegProcessManager:
     # ------------------------------------
     def _start_ffmpeg(self, uid, info):
         try:
+            log("INFO", f"启动 FFmpeg 进程 {uid}", log_path=self.log_file_path)
             # 检查是否已经有相同的进程在运行
             if uid in self.processes:
                 process = self.processes[uid]
