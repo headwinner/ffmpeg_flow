@@ -1,1 +1,7 @@
 /test.py
+ffmpeg
+data
+__pycache__
+logs/
+.vscode/
+hls
